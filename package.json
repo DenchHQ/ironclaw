@@ -140,6 +140,7 @@
   },
   "packageManager": "pnpm@10.23.0",
   "dependencies": {
+    "@agentclientprotocol/sdk": "0.13.0",
     "@buape/carbon": "0.0.0-beta-20260110172854",
     "@clack/prompts": "^0.11.0",
     "@grammyjs/runner": "^2.0.3",

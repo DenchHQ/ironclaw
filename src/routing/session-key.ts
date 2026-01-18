@@ -92,6 +92,15 @@ export function isSubagentSessionKey(sessionKey: string | undefined | null): boo
   return Boolean((parsed?.rest ?? "").toLowerCase().startsWith("subagent:"));
 }
 
+export function isAcpSessionKey(sessionKey: string | undefined | null): boolean {
+  const raw = (sessionKey ?? "").trim();
+  if (!raw) return false;
+  const normalized = raw.toLowerCase();
+  if (normalized.startsWith("acp:")) return true;
+  const parsed = parseAgentSessionKey(raw);
+  return Boolean((parsed?.rest ?? "").toLowerCase().startsWith("acp:"));
+}
+
 export function buildAgentMainSessionKey(params: {
   agentId: string;
   mainKey?: string | undefined;

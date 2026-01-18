@@ -10,6 +10,7 @@ Docs: https://docs.clawd.bot
 - macOS: add approvals socket UI server + node exec lifecycle events.
 - Slash commands: replace `/cost` with `/usage off|tokens|full` to control per-response usage footer; `/usage` no longer aliases `/status`. (Supersedes #1140) — thanks @Nachx639.
 - Docs: refresh exec/elevated/exec-approvals docs for the new flow. https://docs.clawd.bot/tools/exec-approvals
+- CLI: add `clawdbot acp` ACP bridge for IDE integrations.
 
 ### Fixes
 - Tools: return a companion-app-required message when node exec is requested with no paired node.
