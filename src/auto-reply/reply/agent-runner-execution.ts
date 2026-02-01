@@ -187,43 +187,29 @@ export async function runAgentTurnWithFallback(params: {
               ownerNumbers: params.followupRun.run.ownerNumbers,
               cliSessionId,
               images: params.opts?.images,
-            })
-              .then((result) => {
-                // CLI backends don't emit streaming assistant events, so we need to
-                // emit one with the final text so server-chat can populate its buffer
-                // and send the response to TUI/WebSocket clients.
-                const cliText = result.payloads?.[0]?.text?.trim();
-                if (cliText) {
-                  emitAgentEvent({
-                    runId,
-                    stream: "assistant",
-                    data: { text: cliText },
-                  });
-                }
+            }).then((result) => {
+              // CLI backends don't emit streaming assistant events, so we need to
+              // emit one with the final text so server-chat can populate its buffer
+              // and send the response to TUI/WebSocket clients.
+              const cliText = result.payloads?.[0]?.text?.trim();
+              if (cliText) {
                 emitAgentEvent({
                   runId,
-                  stream: "lifecycle",
-                  data: {
-                    phase: "end",
-                    startedAt,
-                    endedAt: Date.now(),
-                  },
+                  stream: "assistant",
+                  data: { text: cliText },
                 });
-                return result;
-              })
-              .catch((err) => {
-                emitAgentEvent({
-                  runId,
-                  stream: "lifecycle",
-                  data: {
-                    phase: "error",
-                    startedAt,
-                    endedAt: Date.now(),
-                    error: err instanceof Error ? err.message : String(err),
-                  },
-                });
-                throw err;
+              }
+              emitAgentEvent({
+                runId,
+                stream: "lifecycle",
+                data: {
+                  phase: "end",
+                  startedAt,
+                  endedAt: Date.now(),
+                },
               });
+              return result;
+            });
           }
           const authProfileId =
             provider === params.followupRun.run.provider
