@@ -7,6 +7,7 @@ import type { SubscribeEmbeddedPiSessionParams } from "./pi-embedded-subscribe.t
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { createStreamingDirectiveAccumulator } from "../auto-reply/reply/streaming-directives.js";
 import { formatToolAggregate } from "../auto-reply/tool-meta.js";
+import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { buildCodeSpanIndex, createInlineCodeState } from "../markdown/code-spans.js";
 import { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
@@ -474,9 +475,6 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   };
 
   const emitReasoningStream = (text: string) => {
-    if (!state.streamReasoning || !params.onReasoningStream) {
-      return;
-    }
     const formatted = formatReasoningMessage(text);
     if (!formatted) {
       return;
@@ -484,10 +482,26 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     if (formatted === state.lastStreamedReasoning) {
       return;
     }
+    // Compute delta before updating state
+    const prev = state.lastStreamedReasoning ?? "";
+    const delta = formatted.startsWith(prev) ? formatted.slice(prev.length) : formatted;
     state.lastStreamedReasoning = formatted;
-    void params.onReasoningStream({
-      text: formatted,
-    });
+
+    // Always emit as agent event so NDJSON/SSE consumers (e.g. --stream-json, web UI) receive thinking
+    if (delta && params.runId) {
+      emitAgentEvent({
+        runId: params.runId,
+        stream: "thinking",
+        data: { delta, text: formatted },
+      });
+    }
+
+    // Callback-based emission (TUI, messaging channels) still guarded by streamReasoning
+    if (state.streamReasoning && params.onReasoningStream) {
+      void params.onReasoningStream({
+        text: formatted,
+      });
+    }
   };
 
   const resetForCompactionRetry = () => {

@@ -8,8 +8,11 @@ export const maxDuration = 30;
 /** POST /api/new-session — send /new to the agent to start a fresh backend session */
 export async function POST() {
   return new Promise<Response>((resolve) => {
-    runAgent("/new", {
+    runAgent("/new", undefined, {
       onTextDelta: () => {},
+      onThinkingDelta: () => {},
+      onToolStart: () => {},
+      onToolEnd: () => {},
       onLifecycleEnd: () => {},
       onError: (err) => {
         console.error("[new-session] Error:", err);

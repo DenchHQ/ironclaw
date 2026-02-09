@@ -109,10 +109,9 @@ export function handleMessageUpdate(
     }
   }
 
-  if (ctx.state.streamReasoning) {
-    // Handle partial <think> tags: stream whatever reasoning is visible so far.
-    ctx.emitReasoningStream(extractThinkingFromTaggedStream(ctx.state.deltaBuffer));
-  }
+  // Extract <think>-tagged reasoning and emit for all consumers (NDJSON/SSE, TUI).
+  // The emitReasoningStream function handles dedup and delta computation internally.
+  ctx.emitReasoningStream(extractThinkingFromTaggedStream(ctx.state.deltaBuffer));
 
   const next = ctx
     .stripBlockTags(ctx.state.deltaBuffer, {

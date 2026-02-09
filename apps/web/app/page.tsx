@@ -31,17 +31,26 @@ export default function Home() {
     setSidebarRefreshKey((k) => k + 1);
   }, []);
 
-  /** Persist messages to the web session's .jsonl file */
+  /** Persist messages to the web session's .jsonl file.
+   *  Saves the full `parts` array (reasoning, tool calls, output, text)
+   *  alongside a plain-text `content` field for backward compat / sidebar. */
   const saveMessages = useCallback(
     async (
       sessionId: string,
-      msgs: Array<{ id: string; role: string; content: string }>,
+      msgs: Array<{
+        id: string;
+        role: string;
+        content: string;
+        parts?: unknown[];
+      }>,
       title?: string,
     ) => {
       const toSave = msgs.map((m) => ({
         id: m.id,
         role: m.role,
         content: m.content,
+        // Persist full UIMessage parts so reasoning + tool calls survive reload
+        ...(m.parts ? { parts: m.parts } : {}),
         timestamp: new Date().toISOString(),
       }));
       try {
@@ -91,13 +100,16 @@ export default function Home() {
     const isNowReady = status === "ready";
 
     if (wasStreaming && isNowReady && currentSessionId) {
-      // Save any unsaved messages (typically the assistant response)
+      // Save any unsaved messages (typically the assistant response).
+      // Include the full parts array so reasoning, tool calls, and their
+      // outputs persist across session reloads.
       const unsaved = messages.filter((m) => !savedMessageIdsRef.current.has(m.id));
       if (unsaved.length > 0) {
         const toSave = unsaved.map((m) => ({
           id: m.id,
           role: m.role,
           content: getMessageText(m),
+          parts: m.parts,
         }));
         saveMessages(currentSessionId, toSave);
       }
@@ -127,10 +139,15 @@ export default function Home() {
       refreshSidebar();
     }
 
-    // Save the user message immediately
+    // Save the user message immediately (include parts for consistency)
     const userMsgId = `user-${Date.now()}`;
     await saveMessages(sessionId, [
-      { id: userMsgId, role: "user", content: userText },
+      {
+        id: userMsgId,
+        role: "user",
+        content: userText,
+        parts: [{ type: "text", text: userText }],
+      },
     ]);
 
     // Send to agent
@@ -155,15 +172,18 @@ export default function Home() {
           id: string;
           role: "user" | "assistant";
           content: string;
+          parts?: Array<Record<string, unknown>>;
         }> = data.messages || [];
 
-        // Convert to UIMessage format and mark all as saved
+        // Convert to UIMessage format and mark all as saved.
+        // Restore from saved `parts` if available (preserves reasoning,
+        // tool calls, output), falling back to plain text for old sessions.
         const uiMessages = sessionMessages.map((msg) => {
           savedMessageIdsRef.current.add(msg.id);
           return {
             id: msg.id,
             role: msg.role,
-            parts: [{ type: "text" as const, text: msg.content }],
+            parts: msg.parts ?? [{ type: "text" as const, text: msg.content }],
           };
         });
 

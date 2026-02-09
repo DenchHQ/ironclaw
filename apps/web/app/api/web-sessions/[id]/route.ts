@@ -9,7 +9,12 @@ const WEB_CHAT_DIR = join(homedir(), ".openclaw", "web-chat");
 export type ChatLine = {
   id: string;
   role: "user" | "assistant";
+  /** Plain text summary (always present, used for sidebar / backward compat). */
   content: string;
+  /** Full UIMessage parts array — reasoning, tool calls, outputs, text.
+   *  Present for sessions saved after the rich-persistence update;
+   *  absent for older sessions (fall back to `content` as a text part). */
+  parts?: Array<Record<string, unknown>>;
   timestamp: string;
 };
 
