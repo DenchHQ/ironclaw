@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { WorkspaceSidebar } from "../components/workspace/workspace-sidebar";
 import { type TreeNode } from "../components/workspace/file-manager-tree";
 import { useWorkspaceWatcher } from "../hooks/use-workspace-watcher";
@@ -14,6 +14,9 @@ import { Breadcrumbs } from "../components/workspace/breadcrumbs";
 import { EmptyState } from "../components/workspace/empty-state";
 import { ReportViewer } from "../components/charts/report-viewer";
 import { ChatPanel } from "../components/chat-panel";
+import { EntryDetailModal } from "../components/workspace/entry-detail-modal";
+import { useSearchIndex } from "@/lib/search-index";
+import { parseWorkspaceLink, isWorkspaceLink } from "@/lib/workspace-links";
 
 // --- Types ---
 
@@ -81,7 +84,7 @@ type ContentState =
 
 // --- Helpers ---
 
-/** Find a node in the tree by path. */
+/** Find a node in the tree by exact path. */
 function findNode(
   tree: TreeNode[],
   path: string,
@@ -102,19 +105,72 @@ function objectNameFromPath(path: string): string {
   return segments[segments.length - 1];
 }
 
+/**
+ * Resolve a path with fallback strategies:
+ * 1. Exact match
+ * 2. Try with knowledge/ prefix
+ * 3. Try stripping knowledge/ prefix
+ * 4. Match last segment against object names
+ */
+function resolveNode(
+  tree: TreeNode[],
+  path: string,
+): TreeNode | null {
+  let node = findNode(tree, path);
+  if (node) {return node;}
+
+  if (!path.startsWith("knowledge/")) {
+    node = findNode(tree, `knowledge/${path}`);
+    if (node) {return node;}
+  }
+
+  if (path.startsWith("knowledge/")) {
+    node = findNode(tree, path.slice("knowledge/".length));
+    if (node) {return node;}
+  }
+
+  const lastSegment = path.split("/").pop();
+  if (lastSegment) {
+    function findByName(nodes: TreeNode[]): TreeNode | null {
+      for (const n of nodes) {
+        if (n.type === "object" && objectNameFromPath(n.path) === lastSegment) {return n;}
+        if (n.children) {
+          const found = findByName(n.children);
+          if (found) {return found;}
+        }
+      }
+      return null;
+    }
+    node = findByName(tree);
+    if (node) {return node;}
+  }
+
+  return null;
+}
+
 // --- Main Page ---
 
 export default function WorkspacePage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const initialPathHandled = useRef(false);
 
   // Live-reactive tree via SSE watcher
   const { tree, loading: treeLoading, exists: workspaceExists, refresh: refreshTree } = useWorkspaceWatcher();
 
+  // Search index for @ mention fuzzy search (files + entries)
+  const { search: searchIndex } = useSearchIndex();
+
   const [context, setContext] = useState<WorkspaceContext | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [content, setContent] = useState<ContentState>({ kind: "none" });
   const [showChatSidebar, setShowChatSidebar] = useState(true);
+
+  // Entry detail modal state
+  const [entryModal, setEntryModal] = useState<{
+    objectName: string;
+    entryId: string;
+  } | null>(null);
 
   // Derive file context for chat sidebar directly from activePath (stable across loading)
   const fileContext = useMemo(() => {
@@ -213,16 +269,59 @@ export default function WorkspacePage() {
     [loadContent],
   );
 
+  // Sync URL bar when activePath changes
+  useEffect(() => {
+    const currentPath = searchParams.get("path");
+    const currentEntry = searchParams.get("entry");
+
+    if (activePath && activePath !== currentPath) {
+      const params = new URLSearchParams();
+      params.set("path", activePath);
+      if (currentEntry) {params.set("entry", currentEntry);}
+      router.replace(`/workspace?${params.toString()}`, { scroll: false });
+    }
+  }, [activePath, searchParams, router]);
+
+  // Open entry modal handler
+  const handleOpenEntry = useCallback(
+    (objectName: string, entryId: string) => {
+      setEntryModal({ objectName, entryId });
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("entry", `${objectName}:${entryId}`);
+      router.replace(`/workspace?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router],
+  );
+
+  // Close entry modal handler
+  const handleCloseEntry = useCallback(() => {
+    setEntryModal(null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("entry");
+    const qs = params.toString();
+    router.replace(qs ? `/workspace?${qs}` : "/workspace", { scroll: false });
+  }, [searchParams, router]);
+
   // Auto-navigate to path from URL query param after tree loads
   useEffect(() => {
     if (initialPathHandled.current || treeLoading || tree.length === 0) {return;}
 
     const pathParam = searchParams.get("path");
+    const entryParam = searchParams.get("entry");
+
     if (pathParam) {
-      const node = findNode(tree, pathParam);
+      const node = resolveNode(tree, pathParam);
       if (node) {
         initialPathHandled.current = true;
         loadContent(node);
+      }
+    }
+
+    // Also open entry modal from URL if present
+    if (entryParam && entryParam.includes(":")) {
+      const [objName, eid] = entryParam.split(":", 2);
+      if (objName && eid) {
+        setEntryModal({ objectName: objName, entryId: eid });
       }
     }
   }, [tree, treeLoading, searchParams, loadContent]);
@@ -234,7 +333,7 @@ export default function WorkspacePage() {
         setContent({ kind: "none" });
         return;
       }
-      const node = findNode(tree, path);
+      const node = resolveNode(tree, path);
       if (node) {
         loadContent(node);
       }
@@ -245,7 +344,6 @@ export default function WorkspacePage() {
   // Navigate to an object by name (used by relation links)
   const handleNavigateToObject = useCallback(
     (objectName: string) => {
-      // Find the object node in the tree
       function findObjectNode(nodes: TreeNode[]): TreeNode | null {
         for (const node of nodes) {
           if (node.type === "object" && objectNameFromPath(node.path) === objectName) {
@@ -264,6 +362,40 @@ export default function WorkspacePage() {
     [tree, loadContent],
   );
 
+  /**
+   * Unified navigate handler for editor links.
+   * Handles both file/object paths and @entry/ links.
+   */
+  /**
+   * Unified navigate handler for links in the editor and read mode.
+   * Handles /workspace?entry=..., /workspace?path=..., and legacy relative paths.
+   */
+  const handleEditorNavigate = useCallback(
+    (href: string) => {
+      // Try parsing as a workspace URL first (/workspace?entry=... or /workspace?path=...)
+      const parsed = parseWorkspaceLink(href);
+      if (parsed) {
+        if (parsed.kind === "entry") {
+          handleOpenEntry(parsed.objectName, parsed.entryId);
+          return;
+        }
+        // File/object link -- resolve using the path from the URL
+        const node = resolveNode(tree, parsed.path);
+        if (node) {
+          handleNodeSelect(node);
+          return;
+        }
+      }
+
+      // Fallback: treat as a raw relative path (legacy links)
+      const node = resolveNode(tree, href);
+      if (node) {
+        handleNodeSelect(node);
+      }
+    },
+    [tree, handleNodeSelect, handleOpenEntry],
+  );
+
   // Refresh the currently displayed object (e.g. after changing display field)
   const refreshCurrentObject = useCallback(async () => {
     if (content.kind !== "object") {return;}
@@ -278,8 +410,28 @@ export default function WorkspacePage() {
     }
   }, [content]);
 
+  // Top-level safety net: catch workspace link clicks anywhere in the page
+  // to prevent full-page navigation and handle via client-side state instead.
+  const handleContainerClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement;
+      const link = target.closest("a");
+      if (!link) {return;}
+      const href = link.getAttribute("href");
+      if (!href) {return;}
+      // Intercept /workspace?... links to handle them in-app
+      if (isWorkspaceLink(href)) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleEditorNavigate(href);
+      }
+    },
+    [handleEditorNavigate],
+  );
+
   return (
-    <div className="flex h-screen" style={{ background: "var(--color-bg)" }}>
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+    <div className="flex h-screen" style={{ background: "var(--color-bg)" }} onClick={handleContainerClick}>
       {/* Sidebar */}
       <WorkspaceSidebar
         tree={tree}
@@ -334,6 +486,9 @@ export default function WorkspacePage() {
               onNavigateToObject={handleNavigateToObject}
               onRefreshObject={refreshCurrentObject}
               onRefreshTree={refreshTree}
+              onNavigate={handleEditorNavigate}
+              onOpenEntry={handleOpenEntry}
+              searchFn={searchIndex}
             />
           </div>
 
@@ -356,6 +511,21 @@ export default function WorkspacePage() {
           )}
         </div>
       </main>
+
+      {/* Entry detail modal (rendered on top of everything) */}
+      {entryModal && (
+        <EntryDetailModal
+          objectName={entryModal.objectName}
+          entryId={entryModal.entryId}
+          members={context?.members}
+          onClose={handleCloseEntry}
+          onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
+          onNavigateObject={(objName) => {
+            handleCloseEntry();
+            handleNavigateToObject(objName);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -372,6 +542,9 @@ function ContentRenderer({
   onNavigateToObject,
   onRefreshObject,
   onRefreshTree,
+  onNavigate,
+  onOpenEntry,
+  searchFn,
 }: {
   content: ContentState;
   workspaceExists: boolean;
@@ -382,6 +555,9 @@ function ContentRenderer({
   onNavigateToObject: (objectName: string) => void;
   onRefreshObject: () => void;
   onRefreshTree: () => void;
+  onNavigate: (href: string) => void;
+  onOpenEntry: (objectName: string, entryId: string) => void;
+  searchFn: (query: string, limit?: number) => import("@/lib/search-index").SearchIndexItem[];
 }) {
   switch (content.kind) {
     case "loading":
@@ -404,6 +580,7 @@ function ContentRenderer({
           members={members}
           onNavigateToObject={onNavigateToObject}
           onRefreshObject={onRefreshObject}
+          onOpenEntry={onOpenEntry}
         />
       );
 
@@ -415,13 +592,8 @@ function ContentRenderer({
           filePath={activePath ?? undefined}
           tree={tree}
           onSave={onRefreshTree}
-          onNavigate={(path) => {
-            // Find the node in the tree and navigate to it
-            const node = findNode(tree, path);
-            if (node) {
-              onNodeSelect(node);
-            }
-          }}
+          onNavigate={onNavigate}
+          searchFn={searchFn}
         />
       );
 
@@ -473,11 +645,13 @@ function ObjectView({
   members,
   onNavigateToObject,
   onRefreshObject,
+  onOpenEntry,
 }: {
   data: ObjectData;
   members?: Array<{ id: string; name: string; email: string; role: string }>;
   onNavigateToObject: (objectName: string) => void;
   onRefreshObject: () => void;
+  onOpenEntry?: (objectName: string, entryId: string) => void;
 }) {
   const [updatingDisplayField, setUpdatingDisplayField] = useState(false);
 
@@ -493,7 +667,6 @@ function ObjectView({
         },
       );
       if (res.ok) {
-        // Refresh the object data to get updated relation labels
         onRefreshObject();
       }
     } catch {
@@ -503,7 +676,6 @@ function ObjectView({
     }
   };
 
-  // Fields eligible to be the display field (text-like types)
   const displayFieldCandidates = data.fields.filter(
     (f) => !["relation", "boolean", "richtext"].includes(f.type),
   );
@@ -554,7 +726,6 @@ function ObjectView({
             {data.fields.length} fields
           </span>
 
-          {/* Relation info badges */}
           {hasRelationFields && (
             <span
               className="text-xs px-2 py-1 rounded-full"
@@ -581,7 +752,6 @@ function ObjectView({
           )}
         </div>
 
-        {/* Display field selector */}
         {displayFieldCandidates.length > 0 && (
           <div className="flex items-center gap-2 mt-3">
             <span
@@ -643,6 +813,7 @@ function ObjectView({
           relationLabels={data.relationLabels}
           reverseRelations={data.reverseRelations}
           onNavigateToObject={onNavigateToObject}
+          onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
         />
       )}
     </div>
@@ -755,7 +926,6 @@ function WelcomeView({
   tree: TreeNode[];
   onNodeSelect: (node: TreeNode) => void;
 }) {
-  // Collect all objects and documents for quick access
   const objects: TreeNode[] = [];
   const documents: TreeNode[] = [];
 
@@ -780,7 +950,6 @@ function WelcomeView({
         Select an item from the sidebar, or browse the sections below.
       </p>
 
-      {/* Objects section */}
       {objects.length > 0 && (
         <div className="mb-8">
           <h2
@@ -835,7 +1004,6 @@ function WelcomeView({
         </div>
       )}
 
-      {/* Documents section */}
       {documents.length > 0 && (
         <div>
           <h2

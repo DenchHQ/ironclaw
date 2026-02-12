@@ -33,6 +33,7 @@ type ObjectTableProps = {
   relationLabels?: Record<string, Record<string, string>>;
   reverseRelations?: ReverseRelation[];
   onNavigateToObject?: (objectName: string) => void;
+  onEntryClick?: (entryId: string) => void;
 };
 
 // --- Helpers ---
@@ -352,6 +353,7 @@ export function ObjectTable({
   relationLabels,
   reverseRelations,
   onNavigateToObject,
+  onEntryClick,
 }: ObjectTableProps) {
   const [sort, setSort] = useState<SortState>(null);
 
@@ -478,10 +480,14 @@ export function ObjectTable({
           {sortedEntries.map((entry, idx) => (
             <tr
               key={String(entry.entry_id ?? idx)}
-              className="transition-colors duration-75"
+              className={`transition-colors duration-75 ${onEntryClick ? "cursor-pointer" : ""}`}
               style={{
                 background:
                   idx % 2 === 0 ? "transparent" : "var(--color-surface)",
+              }}
+              onClick={() => {
+                const eid = String(entry.entry_id ?? "");
+                if (eid && onEntryClick) {onEntryClick(eid);}
               }}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLElement).style.background =

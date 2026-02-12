@@ -624,6 +624,20 @@ body {
   text-overflow: ellipsis;
 }
 
+.slash-cmd-item-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 0.6rem;
+  font-weight: 500;
+  text-transform: capitalize;
+  border-radius: 999px;
+  background: rgba(232, 93, 58, 0.12);
+  color: var(--color-accent);
+  vertical-align: middle;
+  line-height: 1.4;
+}
+
 /* ========================================
    Report Block (in-editor)
    ======================================== */

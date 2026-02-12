@@ -14,6 +14,8 @@ import Suggestion, { type SuggestionOptions } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
 import { createPortal } from "react-dom";
 import type { Editor, Range } from "@tiptap/core";
+import type { SearchIndexItem } from "@/lib/search-index";
+import { buildEntryLink, buildFileLink } from "@/lib/workspace-links";
 
 // Unique plugin keys so both suggestions can coexist
 const slashCommandPluginKey = new PluginKey("slashCommand");
@@ -32,25 +34,14 @@ export type TreeNode = {
 type SlashItem = {
   title: string;
   description?: string;
+  badge?: string;
   icon: React.ReactNode;
-  category: "file" | "block";
+  category: "file" | "block" | "entry";
   command: (props: { editor: Editor; range: Range }) => void;
 };
 
-// --- Helpers ---
-
-function flattenTree(nodes: TreeNode[]): TreeNode[] {
-  const result: TreeNode[] = [];
-  for (const node of nodes) {
-    if (node.type !== "folder") {
-      result.push(node);
-    }
-    if (node.children) {
-      result.push(...flattenTree(node.children));
-    }
-  }
-  return result;
-}
+/** Search function signature accepted by createWorkspaceMention. */
+export type MentionSearchFn = (query: string, limit?: number) => SearchIndexItem[];
 
 function nodeTypeIcon(type: string) {
   switch (type) {
@@ -152,7 +143,71 @@ const reportIcon = (
   </svg>
 );
 
+const entryIcon = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z" />
+    <path d="M15 3v4a2 2 0 0 0 2 2h4" />
+    <path d="M10 16h4" /><path d="M10 12h4" />
+  </svg>
+);
+
 // --- Build items ---
+
+/** Convert a SearchIndexItem to a SlashItem for the @ mention popup. */
+function searchItemToSlashItem(item: SearchIndexItem): SlashItem {
+  if (item.kind === "entry") {
+    const label = item.label || `(${item.objectName} entry)`;
+    return {
+      title: label,
+      description: item.fields
+        ? Object.entries(item.fields)
+            .slice(0, 2)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(" | ")
+        : undefined,
+      badge: item.objectName,
+      icon: entryIcon,
+      category: "entry",
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
+        const href = buildEntryLink(item.objectName!, item.entryId!);
+        editor
+          .chain()
+          .focus()
+          .deleteRange(range)
+          .insertContent({
+            type: "text",
+            text: label,
+            marks: [{ type: "link", attrs: { href, target: null } }],
+          })
+          .run();
+      },
+    };
+  }
+
+  const nodeType = item.nodeType ?? (item.kind === "object" ? "object" : "file");
+  const label = item.label || item.path || item.id;
+  return {
+    title: label,
+    description: item.sublabel,
+    icon: nodeTypeIcon(nodeType),
+    category: "file",
+    command: ({ editor, range }: { editor: Editor; range: Range }) => {
+      const href = buildFileLink(item.path ?? item.id);
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({
+          type: "text",
+          text: label,
+          marks: [
+            { type: "link", attrs: { href, target: null } },
+          ],
+        })
+        .run();
+    },
+  };
+}
 
 function buildBlockCommands(): SlashItem[] {
   return [
@@ -300,35 +355,7 @@ function buildBlockCommands(): SlashItem[] {
   ];
 }
 
-function buildFileItems(tree: TreeNode[]): SlashItem[] {
-  const flatFiles = flattenTree(tree);
-  return flatFiles.map((node) => ({
-    title: node.name.replace(/\.md$/, ""),
-    description: node.path,
-    icon: nodeTypeIcon(node.type),
-    category: "file" as const,
-    command: ({ editor, range }: { editor: Editor; range: Range }) => {
-      const label = node.name.replace(/\.md$/, "");
-      // Insert as structured content so the link mark is applied properly
-      // (raw HTML strings get escaped by the Markdown extension)
-      editor
-        .chain()
-        .focus()
-        .deleteRange(range)
-        .insertContent({
-          type: "text",
-          text: label,
-          marks: [
-            {
-              type: "link",
-              attrs: { href: node.path, target: null },
-            },
-          ],
-        })
-        .run();
-    },
-  }));
-}
+// buildFileItems removed -- replaced by searchItemToSlashItem + search index
 
 // --- Popup Component ---
 
@@ -397,14 +424,19 @@ const CommandList = forwardRef<CommandListRef, CommandListProps>(
         {items.map((item, index) => (
           <button
             type="button"
-            key={`${item.category}-${item.title}`}
+            key={`${item.category}-${item.title}-${index}`}
             className={`slash-cmd-item ${index === selectedIndex ? "slash-cmd-item-active" : ""}`}
             onClick={() => selectItem(index)}
             onMouseEnter={() => setSelectedIndex(index)}
           >
             <span className="slash-cmd-item-icon">{item.icon}</span>
             <span className="slash-cmd-item-body">
-              <span className="slash-cmd-item-title">{item.title}</span>
+              <span className="slash-cmd-item-title">
+                {item.title}
+                {item.badge && (
+                  <span className="slash-cmd-item-badge">{item.badge}</span>
+                )}
+              </span>
               {item.description && (
                 <span className="slash-cmd-item-desc">{item.description}</span>
               )}
@@ -562,11 +594,10 @@ export function createSlashCommand() {
 }
 
 /**
- * "@" mention command -- workspace file cross-linking
+ * "@" mention command -- unified workspace search (files + objects + entries).
+ * Accepts a search function from the useSearchIndex hook for fast fuzzy matching.
  */
-export function createFileMention(tree: TreeNode[]) {
-  const fileItems = buildFileItems(tree);
-
+export function createWorkspaceMention(searchFn: MentionSearchFn) {
   return Extension.create({
     name: "fileMention",
 
@@ -580,15 +611,8 @@ export function createFileMention(tree: TreeNode[]) {
             item.command({ editor, range });
           },
           items: ({ query }: { query: string }) => {
-            const q = query.toLowerCase();
-            if (!q) {return fileItems.slice(0, 15);}
-            return fileItems
-              .filter(
-                (item) =>
-                  item.title.toLowerCase().includes(q) ||
-                  (item.description?.toLowerCase().includes(q) ?? false),
-              )
-              .slice(0, 15);
+            const results = searchFn(query, 15);
+            return results.map(searchItemToSlashItem);
           },
           render: createSuggestionRenderer(),
         } satisfies Partial<SuggestionOptions<SlashItem>>,
@@ -604,4 +628,43 @@ export function createFileMention(tree: TreeNode[]) {
       ];
     },
   });
+}
+
+/**
+ * "@" mention command -- legacy file-only cross-linking (fallback).
+ * @deprecated Use createWorkspaceMention with useSearchIndex instead.
+ */
+export function createFileMention(tree: TreeNode[]) {
+  function flattenTree(nodes: TreeNode[]): TreeNode[] {
+    const result: TreeNode[] = [];
+    for (const node of nodes) {
+      if (node.type !== "folder") {result.push(node);}
+      if (node.children) {result.push(...flattenTree(node.children));}
+    }
+    return result;
+  }
+
+  const flatFiles = flattenTree(tree);
+  const searchItems: SearchIndexItem[] = flatFiles.map((node) => ({
+    id: node.path,
+    label: node.name.replace(/\.md$/, ""),
+    sublabel: node.path,
+    kind: (node.type === "object" ? "object" : "file") as SearchIndexItem["kind"],
+    path: node.path,
+    nodeType: node.type as SearchIndexItem["nodeType"],
+  }));
+
+  const searchFn: MentionSearchFn = (query, limit = 15) => {
+    if (!query) {return searchItems.slice(0, limit);}
+    const q = query.toLowerCase();
+    return searchItems
+      .filter(
+        (item) =>
+          item.label.toLowerCase().includes(q) ||
+          (item.sublabel?.toLowerCase().includes(q) ?? false),
+      )
+      .slice(0, limit);
+  };
+
+  return createWorkspaceMention(searchFn);
 }

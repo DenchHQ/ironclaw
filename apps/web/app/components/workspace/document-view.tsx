@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, type MouseEvent as ReactMouseEvent } from "react";
 import dynamic from "next/dynamic";
 import { splitReportBlocks, hasReportBlocks } from "@/lib/report-blocks";
-import type { TreeNode } from "./slash-command";
+import { isWorkspaceLink } from "@/lib/workspace-links";
+import type { TreeNode, MentionSearchFn } from "./slash-command";
 
 // Load markdown renderer client-only to avoid SSR issues with ESM-only packages
 const MarkdownContent = dynamic(
@@ -58,6 +59,7 @@ type DocumentViewProps = {
   tree?: TreeNode[];
   onSave?: () => void;
   onNavigate?: (path: string) => void;
+  searchFn?: MentionSearchFn;
 };
 
 export function DocumentView({
@@ -67,6 +69,7 @@ export function DocumentView({
   tree,
   onSave,
   onNavigate,
+  searchFn,
 }: DocumentViewProps) {
   const [editMode, setEditMode] = useState(!!filePath);
 
@@ -91,6 +94,7 @@ export function DocumentView({
           onSave={onSave}
           onNavigate={onNavigate}
           onSwitchToRead={() => setEditMode(false)}
+          searchFn={searchFn}
         />
       </div>
     );
@@ -99,8 +103,27 @@ export function DocumentView({
   // Check if the markdown contains embedded report-json blocks
   const hasReports = hasReportBlocks(markdownBody);
 
+  // Intercept workspace-internal links in read mode (delegated click handler)
+  const handleLinkClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!onNavigate) {return;}
+      const target = event.target as HTMLElement;
+      const link = target.closest("a");
+      if (!link) {return;}
+      const href = link.getAttribute("href");
+      if (!href) {return;}
+      if (isWorkspaceLink(href)) {
+        event.preventDefault();
+        event.stopPropagation();
+        onNavigate(href);
+      }
+    },
+    [onNavigate],
+  );
+
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8">
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+    <div className="max-w-3xl mx-auto px-6 py-8" onClick={handleLinkClick}>
       {/* Header row with title + edit button */}
       <div className="flex items-start justify-between gap-4">
         {displayTitle && (

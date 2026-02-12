@@ -16,7 +16,8 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 
 import { ReportBlockNode, preprocessReportBlocks, postprocessReportBlocks } from "./report-block-node";
-import { createSlashCommand, createFileMention, type TreeNode } from "./slash-command";
+import { createSlashCommand, createWorkspaceMention, createFileMention, type TreeNode, type MentionSearchFn } from "./slash-command";
+import { isWorkspaceLink } from "@/lib/workspace-links";
 
 // --- Types ---
 
@@ -31,6 +32,8 @@ export type MarkdownEditorProps = {
   onNavigate?: (path: string) => void;
   /** Switch to read-only mode (renders a "Read" button in the top bar). */
   onSwitchToRead?: () => void;
+  /** Optional search function from useSearchIndex for fuzzy @ mention search. */
+  searchFn?: MentionSearchFn;
 };
 
 // --- Main component ---
@@ -49,6 +52,7 @@ export function MarkdownEditor({
   onSave,
   onNavigate,
   onSwitchToRead,
+  searchFn,
 }: MarkdownEditorProps) {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "error">("idle");
@@ -60,9 +64,15 @@ export function MarkdownEditor({
   // Preserve frontmatter so save can prepend it back
   const frontmatterRef = useRef(extractFrontmatter(rawContent ?? ""));
 
-  // "/" for block commands, "@" for file mentions
+  // "/" for block commands, "@" for workspace search (files + entries)
   const slashCommand = useMemo(() => createSlashCommand(), []);
-  const fileMention = useMemo(() => createFileMention(tree), [tree]);
+  const fileMention = useMemo(
+    () => searchFn ? createWorkspaceMention(searchFn) : createFileMention(tree),
+    // searchFn from useSearchIndex is a stable ref-based function, so this
+    // only re-runs on initial mount or if tree changes as fallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [searchFn, tree],
+  );
 
   const editor = useEditor({
     extensions: [
@@ -81,7 +91,12 @@ export function MarkdownEditor({
       }),
       Link.configure({
         openOnClick: false,
-        HTMLAttributes: { class: "editor-link" },
+        autolink: true,
+        HTMLAttributes: {
+          class: "editor-link",
+          // Prevent browser from following workspace links as real URLs
+          rel: "noopener",
+        },
       }),
       Table.configure({ resizable: false }),
       TableRow,
@@ -212,7 +227,9 @@ export function MarkdownEditor({
     };
   }, [editor, insertUploadedImages]);
 
-  // Handle link clicks for workspace navigation
+  // Handle link clicks for workspace navigation.
+  // Links are real URLs like /workspace?path=... so clicking them navigates
+  // within the same tab. We intercept to avoid a full page reload.
   useEffect(() => {
     if (!editor || !onNavigate) {return;}
 
@@ -224,8 +241,8 @@ export function MarkdownEditor({
       const href = link.getAttribute("href");
       if (!href) {return;}
 
-      // Workspace-internal link (relative path, no protocol)
-      if (!href.startsWith("http://") && !href.startsWith("https://") && !href.startsWith("mailto:")) {
+      // Intercept /workspace?... links to handle via client-side state
+      if (isWorkspaceLink(href)) {
         event.preventDefault();
         event.stopPropagation();
         onNavigate(href);
@@ -233,8 +250,8 @@ export function MarkdownEditor({
     };
 
     const editorElement = editor.view.dom;
-    editorElement.addEventListener("click", handleClick);
-    return () => editorElement.removeEventListener("click", handleClick);
+    editorElement.addEventListener("click", handleClick, true);
+    return () => editorElement.removeEventListener("click", handleClick, true);
   }, [editor, onNavigate]);
 
   // Save handler
