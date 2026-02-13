@@ -2,88 +2,119 @@
 
 import Link from "next/link";
 
+// Three dramatic slash marks — like a panther raking its claws
+const CLAW_ASCII = [
+  "                                                                                          ░░░░",
+  "                                                                                        ░░░░░░",
+  "                                         ░░░░                                          ░░░░░░░",
+  "                                       ░░░░░░                            ░░░░         ░░░▓▓░░░",
+  "                          ░░░░        ░░░░░░░                          ░░░░░░        ░░▓▓▓▓░░░",
+  "                        ░░░░░░       ░░░▓▓░░░              ░░░░       ░░░░░░░       ░░▓▓▓▓▓░░ ",
+  "                       ░░░░░░░      ░░▓▓▓▓░░░            ░░░░░░      ░░░▓▓░░░     ░░▓▓▓▓▓░░  ",
+  "                      ░░░▓▓░░░     ░░▓▓▓▓▓░░            ░░░░░░░     ░░▓▓▓▓░░░    ░▓▓▓▓▓▓░░   ",
+  "                     ░░▓▓▓▓░░░    ░░▓▓▓▓▓░░            ░░░▓▓░░░    ░░▓▓▓▓▓░░    ░▓▓▓▓▓▓░░    ",
+  "                    ░░▓▓▓▓▓░░    ░▓▓▓▓▓▓░░            ░░▓▓▓▓░░░   ░░▓▓▓▓▓░░    ▓▓▓▓▓▓░░     ",
+  "                   ░░▓▓▓▓▓░░    ░▓▓▓▓▓▓░░            ░░▓▓▓▓▓░░   ░▓▓▓▓▓▓░░    ▓▓▓▓▓▓░░      ",
+  "                  ░░▓▓▓▓▓░░    ▓▓▓▓▓▓░░             ░░▓▓▓▓▓░░    ░▓▓▓▓▓░░    ▓▓▓▓▓░░░       ",
+  "                 ░▓▓▓▓▓▓░░    ▓▓▓▓▓▓░░             ░░▓▓▓▓▓░░    ▓▓▓▓▓▓░░    ▓▓▓▓▓░░         ",
+  "                ░▓▓▓▓▓▓░░    ▓▓▓▓▓░░░             ░▓▓▓▓▓▓░░    ▓▓▓▓▓▓░░    ▓▓▓▓▓░░          ",
+  "               ░▓▓▓▓▓▓░░   ▓▓▓▓▓░░              ░▓▓▓▓▓▓░░    ▓▓▓▓▓░░░   ▓▓▓▓▓░░            ",
+  "              ░▓▓▓▓▓░░░   ▓▓▓▓▓░░              ░▓▓▓▓▓▓░░    ▓▓▓▓▓░░    ▓▓▓▓▓░░             ",
+  "             ░▓▓▓▓▓░░    ▓▓▓▓░░░              ░▓▓▓▓▓░░░    ▓▓▓▓▓░░    ▓▓▓▓░░░              ",
+  "            ░▓▓▓▓▓░░    ▓▓▓▓░░              ░░▓▓▓▓▓░░     ▓▓▓▓░░░   ▓▓▓▓░░                ",
+  "           ░▓▓▓▓░░░   ▓▓▓▓░░              ░░▓▓▓▓▓░░      ▓▓▓▓░░    ▓▓▓▓░░                 ",
+  "          ░▓▓▓▓░░    ▓▓▓░░░              ░▓▓▓▓▓░░░      ▓▓▓▓░░    ▓▓▓░░░                  ",
+  "         ░▓▓▓▓░░    ▓▓▓░░              ░░▓▓▓▓░░        ▓▓▓░░░   ▓▓▓░░                    ",
+  "        ░▓▓▓░░░    ▓▓░░░              ░▓▓▓▓░░░        ▓▓▓░░    ▓▓▓░░                     ",
+  "       ░▓▓▓░░     ▓▓░░              ░░▓▓▓░░          ▓▓░░░    ▓▓░░░                      ",
+  "      ░▓▓░░░    ░▓░░              ░░▓▓▓░░           ▓▓░░     ▓▓░░                        ",
+  "     ░▓▓░░     ░▓░░              ░▓▓▓░░░          ░▓░░░    ░▓░░                          ",
+  "    ░▓░░░     ░░░               ░▓▓░░            ░▓░░     ░▓░░                           ",
+  "   ░▓░░      ░░               ░░▓░░░           ░░░░     ░░░░                             ",
+  "  ░░░░      ░                ░░▓░░             ░░░      ░░░                              ",
+  "  ░░░                       ░░░░░              ░░       ░░                               ",
+  " ░░                         ░░░               ░                                          ",
+  " ░                          ░░                                                           ",
+];
+
+const IRONCLAW_ASCII = [
+  " ██╗██████╗  ██████╗ ███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗",
+  " ██║██╔══██╗██╔═══██╗████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║",
+  " ██║██████╔╝██║   ██║██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║",
+  " ██║██╔══██╗██║   ██║██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║",
+  " ██║██║  ██║╚██████╔╝██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝",
+  " ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝ ",
+];
+
 export default function Home() {
   return (
-    <div
-      className="flex flex-col items-center justify-center min-h-screen px-6"
-      style={{ background: "var(--color-bg)" }}
-    >
-      {/* Logo / brand mark */}
-      <div
-        className="mb-8 w-16 h-16 rounded-2xl flex items-center justify-center"
-        style={{
-          background: "var(--color-accent-light)",
-          boxShadow: "var(--shadow-md)",
-        }}
-      >
-        <svg
-          width="28"
-          height="28"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{ color: "var(--color-accent)" }}
+    <>
+      <style>{`
+        @keyframes iron-shimmer {
+          0% {
+            background-position: -200% center;
+          }
+          100% {
+            background-position: 200% center;
+          }
+        }
+
+        .ascii-banner {
+          font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono",
+            "Courier New", monospace;
+          white-space: pre;
+          line-height: 1.15;
+          font-size: clamp(0.5rem, 1.8vw, 1.4rem);
+          background: linear-gradient(
+            90deg,
+            #374151 0%,
+            #4b5563 10%,
+            #6b7280 20%,
+            #9ca3af 30%,
+            #d1d5db 40%,
+            #f3f4f6 50%,
+            #d1d5db 60%,
+            #9ca3af 70%,
+            #6b7280 80%,
+            #4b5563 90%,
+            #374151 100%
+          );
+          background-size: 200% 100%;
+          background-clip: text;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          animation: iron-shimmer 2.5s ease-in-out infinite;
+        }
+      `}</style>
+
+      <div className="relative flex flex-col items-center justify-center min-h-screen bg-stone-50 overflow-hidden">
+        {/* Claw slash marks as full background */}
+        <div
+          className="absolute inset-0 flex items-center justify-center select-none pointer-events-none text-stone-200/40"
+          style={{
+            fontFamily: '"SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", "Courier New", monospace',
+            whiteSpace: "pre",
+            lineHeight: 1.0,
+            fontSize: "clamp(0.75rem, 1.6vw, 1.5rem)",
+          }}
         >
-          <rect width="7" height="7" x="3" y="3" rx="1" />
-          <rect width="7" height="7" x="14" y="3" rx="1" />
-          <rect width="7" height="7" x="14" y="14" rx="1" />
-          <rect width="7" height="7" x="3" y="14" rx="1" />
-        </svg>
+          {CLAW_ASCII.join("\n")}
+        </div>
+
+        {/* Foreground content */}
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="ascii-banner select-none" aria-label="IRONCLAW">
+            {IRONCLAW_ASCII.join("\n")}
+          </div>
+          <Link
+            href="/workspace"
+            className="mt-10 text-lg text-stone-400 hover:text-stone-600 transition-all"
+            style={{ fontFamily: "monospace" }}
+          >
+            enter the app &rarr;
+          </Link>
+        </div>
       </div>
-
-      {/* Heading */}
-      <h1
-        className="font-instrument text-5xl md:text-6xl tracking-tight mb-3 text-center"
-        style={{ color: "var(--color-text)" }}
-      >
-        Ironclaw
-      </h1>
-
-      {/* Tagline */}
-      <p
-        className="text-base mb-10 text-center max-w-md leading-relaxed"
-        style={{ color: "var(--color-text-muted)" }}
-      >
-        Your AI workspace &mdash; chat, knowledge, skills, and memory in one
-        place.
-      </p>
-
-      {/* CTA */}
-      <Link
-        href="/workspace"
-        className="inline-flex items-center gap-2.5 px-7 py-3.5 rounded-full text-sm font-medium transition-all hover:scale-[1.02] active:scale-[0.98]"
-        style={{
-          background: "var(--color-accent)",
-          color: "#fff",
-          boxShadow: "var(--shadow-md)",
-        }}
-      >
-        Open Workspace
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M5 12h14" />
-          <path d="m12 5 7 7-7 7" />
-        </svg>
-      </Link>
-
-      {/* Subtle footer */}
-      <p
-        className="mt-16 text-xs"
-        style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
-      >
-        Powered by OpenClaw
-      </p>
-    </div>
+    </>
   );
 }
