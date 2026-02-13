@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export type AgentEvent = {
 	event: string;
@@ -109,19 +110,64 @@ export type RunAgentOptions = {
 };
 
 /**
+ * Resolve the ironclaw/openclaw package root directory.
+ *
+ * In a dev workspace the cwd is `<repo>/apps/web` and `scripts/run-node.mjs`
+ * exists two levels up.  In a production standalone build the cwd is
+ * `<pkg>/apps/web/.next/standalone/apps/web/` — walking two levels up lands
+ * inside the `.next` tree, not at the package root.
+ *
+ * Strategy:
+ *  1. Honour `OPENCLAW_ROOT` env var (set by the gateway when spawning the
+ *     standalone server — guaranteed correct).
+ *  2. Walk upward from cwd looking for `openclaw.mjs` (production) or
+ *     `scripts/run-node.mjs` (dev).
+ *  3. Fallback: original 2-levels-up heuristic.
+ */
+export function resolvePackageRoot(): string {
+	// 1. Env var (fastest, most reliable in standalone mode).
+	if (process.env.OPENCLAW_ROOT && existsSync(process.env.OPENCLAW_ROOT)) {
+		return process.env.OPENCLAW_ROOT;
+	}
+
+	// 2. Walk up from cwd.
+	let dir = process.cwd();
+	for (let i = 0; i < 20; i++) {
+		if (
+			existsSync(join(dir, "openclaw.mjs")) ||
+			existsSync(join(dir, "scripts", "run-node.mjs"))
+		) {
+			return dir;
+		}
+		const parent = dirname(dir);
+		if (parent === dir) {break;}
+		dir = parent;
+	}
+
+	// 3. Fallback: legacy heuristic.
+	const cwd = process.cwd();
+	return cwd.endsWith(join("apps", "web"))
+		? join(cwd, "..", "..")
+		: cwd;
+}
+
+/**
  * Spawn an agent child process and return the ChildProcess handle.
  * Shared between `runAgent` (legacy callback API) and the ActiveRunManager.
+ *
+ * In a dev workspace uses `scripts/run-node.mjs` (auto-rebuilds TypeScript).
+ * In production / global-install uses `openclaw.mjs` directly (pre-built).
  */
 export function spawnAgentProcess(
 	message: string,
 	agentSessionId?: string,
 ): ReturnType<typeof spawn> {
-	const cwd = process.cwd();
-	const root = cwd.endsWith(join("apps", "web"))
-		? join(cwd, "..", "..")
-		: cwd;
+	const root = resolvePackageRoot();
 
-	const scriptPath = join(root, "scripts", "run-node.mjs");
+	// Dev: scripts/run-node.mjs (auto-rebuild). Prod: openclaw.mjs (pre-built).
+	const devScript = join(root, "scripts", "run-node.mjs");
+	const prodScript = join(root, "openclaw.mjs");
+	const scriptPath = existsSync(devScript) ? devScript : prodScript;
 
 	const args = [
 		scriptPath,
@@ -225,6 +271,11 @@ export async function runAgent(
 		let agentErrorReported = false;
 
 		const rl = createInterface({ input: child.stdout! });
+
+		// Prevent unhandled 'error' events when the child process fails
+		// to start (e.g. ENOENT). The child's own 'error' handler below
+		// surfaces the real error to the caller.
+		rl.on("error", () => { /* handled by child error/close */ });
 
 		rl.on("line", (line: string) => {
 			if (!line.trim()) {return;}

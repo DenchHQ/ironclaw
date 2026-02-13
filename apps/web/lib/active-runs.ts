@@ -350,6 +350,16 @@ function wireChildProcess(run: ActiveRun): void {
 
 	const rl = createInterface({ input: child.stdout! });
 
+	// Prevent unhandled 'error' events on the readline interface.
+	// When the child process fails to start (e.g. ENOENT — missing script)
+	// the stdout pipe is destroyed and readline re-emits the error.  Without
+	// this handler Node.js throws "Unhandled 'error' event" which crashes
+	// the API route instead of surfacing a clean message to the user.
+	rl.on("error", () => {
+		// Swallow — the child 'error' / 'close' handlers take care of
+		// emitting user-visible diagnostics.
+	});
+
 	rl.on("line", (line: string) => {
 		if (!line.trim()) {return;}
 

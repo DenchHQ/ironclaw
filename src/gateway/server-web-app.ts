@@ -224,13 +224,24 @@ export async function startWebAppIfEnabled(
     // Production: prefer standalone, fall back to legacy, then workspace build.
     const serverJs = resolveStandaloneServerJs(webAppDir);
 
+    // The web app's agent-runner needs to find openclaw.mjs or
+    // scripts/run-node.mjs to spawn agent processes.  In standalone mode
+    // the server's cwd is deep inside .next/standalone/ so we pass the
+    // actual package root via env so it doesn't have to guess.
+    const packageRoot = path.resolve(webAppDir, "..", "..");
+
     if (fs.existsSync(serverJs)) {
       // Standalone build found — just run it (npm global install or post-build).
       log.info(`starting web app (standalone) on port ${port}…`);
       child = spawn("node", [serverJs], {
         cwd: path.dirname(serverJs),
         stdio: "pipe",
-        env: { ...process.env, PORT: String(port), HOSTNAME: "0.0.0.0" },
+        env: {
+          ...process.env,
+          PORT: String(port),
+          HOSTNAME: "0.0.0.0",
+          OPENCLAW_ROOT: packageRoot,
+        },
       });
     } else if (hasLegacyNextBuild(webAppDir)) {
       // Legacy build — use `next start` (dev workspace that hasn't rebuilt).
@@ -253,7 +264,12 @@ export async function startWebAppIfEnabled(
         child = spawn("node", [serverJs], {
           cwd: path.dirname(serverJs),
           stdio: "pipe",
-          env: { ...process.env, PORT: String(port), HOSTNAME: "0.0.0.0" },
+          env: {
+            ...process.env,
+            PORT: String(port),
+            HOSTNAME: "0.0.0.0",
+            OPENCLAW_ROOT: packageRoot,
+          },
         });
       } else {
         log.info(`starting web app (production) on port ${port}…`);
