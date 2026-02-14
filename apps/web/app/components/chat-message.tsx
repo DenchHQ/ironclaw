@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { UIMessage } from "ai";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
@@ -420,6 +420,120 @@ function AttachedFilesCard({ paths }: { paths: string[] }) {
 	);
 }
 
+/* ─── File path detection for clickable inline code ─── */
+
+/**
+ * Detect whether an inline code string looks like a local file/directory path.
+ * Matches patterns like:
+ *   ~/Downloads/file.pdf
+ *   /Users/name/Documents/file.txt
+ *   /home/user/file.py
+ *   ./relative/path
+ *   ../parent/path
+ *   /etc/config
+ */
+const FILE_PATH_RE =
+	/^(?:~\/|\.\.?\/|\/(?:Users|home|tmp|var|etc|opt|usr|Library|Applications|Downloads|Documents|Desktop)\b)[^\s]*$/;
+
+function looksLikeFilePath(text: string): boolean {
+	if (!text || text.length < 2 || text.length > 500) {return false;}
+	return FILE_PATH_RE.test(text.trim());
+}
+
+/** Open a file path using the system default application. */
+async function openFilePath(path: string, reveal = false) {
+	try {
+		const res = await fetch("/api/workspace/open-file", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path, reveal }),
+		});
+		if (!res.ok) {
+			const data = await res.json().catch(() => ({}));
+			console.error("Failed to open file:", data);
+		}
+	} catch (err) {
+		console.error("Failed to open file:", err);
+	}
+}
+
+/** Clickable file path inline code element */
+function FilePathCode({
+	path,
+	children,
+}: {
+	path: string;
+	children: React.ReactNode;
+}) {
+	const [status, setStatus] = useState<"idle" | "opening" | "error">("idle");
+
+	const handleClick = async (e: React.MouseEvent) => {
+		e.preventDefault();
+		setStatus("opening");
+		try {
+			const res = await fetch("/api/workspace/open-file", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path }),
+			});
+			if (!res.ok) {
+				setStatus("error");
+				setTimeout(() => setStatus("idle"), 2000);
+			} else {
+				setStatus("idle");
+			}
+		} catch {
+			setStatus("error");
+			setTimeout(() => setStatus("idle"), 2000);
+		}
+	};
+
+	const handleContextMenu = async (e: React.MouseEvent) => {
+		// Right-click reveals in Finder instead of opening
+		e.preventDefault();
+		await openFilePath(path, true);
+	};
+
+	return (
+		<code
+			className="file-path-code"
+			onClick={handleClick}
+			onContextMenu={handleContextMenu}
+			title={status === "error" ? "File not found" : `Click to open · Right-click to reveal in Finder`}
+			style={{
+				cursor: status === "opening" ? "wait" : "pointer",
+				opacity: status === "opening" ? 0.7 : 1,
+			}}
+		>
+			<svg
+				width="12"
+				height="12"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				className="file-path-icon"
+			>
+				{status === "error" ? (
+					<>
+						<circle cx="12" cy="12" r="10" />
+						<line x1="15" x2="9" y1="9" y2="15" />
+						<line x1="9" x2="15" y1="9" y2="15" />
+					</>
+				) : (
+					<>
+						<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+						<path d="M14 2v4a2 2 0 0 0 2 2h4" />
+					</>
+				)}
+			</svg>
+			{children}
+		</code>
+	);
+}
+
 /* ─── Markdown component overrides for chat ─── */
 
 const mdComponents: Components = {
@@ -491,7 +605,7 @@ const mdComponents: Components = {
 		// Fallback: default pre rendering
 		return <pre {...props}>{children}</pre>;
 	},
-	// Inline code (no highlighting needed)
+	// Inline code — detect file paths and make them clickable
 	code: ({ children, className, ...props }) => {
 		// If this code has a language class, it's inside a <pre> and
 		// will be handled by the pre override above. Just return raw.
@@ -502,7 +616,14 @@ const mdComponents: Components = {
 				</code>
 			);
 		}
-		// Inline code
+
+		// Check if the inline code content looks like a file path
+		const text = typeof children === "string" ? children : "";
+		if (text && looksLikeFilePath(text)) {
+			return <FilePathCode path={text}>{children}</FilePathCode>;
+		}
+
+		// Regular inline code
 		return <code {...props}>{children}</code>;
 	},
 };
