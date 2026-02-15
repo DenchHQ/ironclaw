@@ -1,66 +1,7 @@
 import type { Command } from "commander";
-import { confirm, isCancel, select, spinner } from "@clack/prompts";
-import { spawnSync } from "node:child_process";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import {
-  checkShellCompletionStatus,
-  ensureCompletionCacheExists,
-} from "../commands/doctor-completion.js";
-import { doctorCommand } from "../commands/doctor.js";
-import {
-  formatUpdateAvailableHint,
-  formatUpdateOneLiner,
-  resolveUpdateAvailability,
-} from "../commands/status.update.js";
-import { readConfigFileSnapshot, writeConfigFile } from "../config/config.js";
-import { resolveStateDir } from "../config/paths.js";
-import { formatDurationPrecise } from "../infra/format-time/format-duration.ts";
-import { resolveOpenClawPackageRoot } from "../infra/openclaw-root.js";
-import { trimLogTail } from "../infra/restart-sentinel.js";
-import { parseSemver } from "../infra/runtime-guard.js";
-import {
-  channelToNpmTag,
-  DEFAULT_GIT_CHANNEL,
-  DEFAULT_PACKAGE_CHANNEL,
-  formatUpdateChannelLabel,
-  normalizeUpdateChannel,
-  resolveEffectiveUpdateChannel,
-} from "../infra/update-channels.js";
-import {
-  checkUpdateStatus,
-  compareSemverStrings,
-  fetchNpmTagVersion,
-  resolveNpmChannelTag,
-} from "../infra/update-check.js";
-import {
-  detectGlobalInstallManagerByPresence,
-  detectGlobalInstallManagerForRoot,
-  cleanupGlobalRenameDirs,
-  globalInstallArgs,
-  resolveGlobalPackageRoot,
-  type GlobalInstallManager,
-} from "../infra/update-global.js";
-import {
-  runGatewayUpdate,
-  type UpdateRunResult,
-  type UpdateStepInfo,
-  type UpdateStepResult,
-  type UpdateStepProgress,
-} from "../infra/update-runner.js";
-import { syncPluginsForUpdateChannel, updateNpmInstalledPlugins } from "../plugins/update.js";
-import { runCommandWithTimeout } from "../process/exec.js";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
-import { stylePromptHint, stylePromptMessage } from "../terminal/prompt-style.js";
-import { renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
-import { pathExists } from "../utils.js";
-import { replaceCliName, resolveCliName } from "./cli-name.js";
-import { formatCliCommand } from "./command-format.js";
-import { installCompletion } from "./completion-cli.js";
-import { runDaemonRestart } from "./daemon-cli.js";
 import { formatHelpExamples } from "./help-format.js";
 
 export type UpdateCommandOptions = {
