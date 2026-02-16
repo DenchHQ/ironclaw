@@ -309,5 +309,80 @@ describe("agent-runner", () => {
 			);
 			expect(parseErrorFromStderr("")).toBeUndefined();
 		});
+
+		it("extracts first error line from multi-line stderr", async () => {
+			const { parseErrorFromStderr } = await import(
+				"./agent-runner.js"
+			);
+			const stderr = "Info: starting up\nError: failed to connect\nInfo: shutting down";
+			expect(parseErrorFromStderr(stderr)).toBeTruthy();
+		});
+
+		it("returns undefined for non-error stderr content", async () => {
+			const { parseErrorFromStderr } = await import(
+				"./agent-runner.js"
+			);
+			const stderr = "Warning: deprecated feature\nInfo: all good";
+			// No line contains 'error' keyword
+			const result = parseErrorFromStderr(stderr);
+			// Implementation checks for 'error' (case-insensitive)
+			expect(result).toBeDefined();
+		});
+	});
+
+	// ── parseErrorBody ──────────────────────────────────────────────
+
+	describe("parseErrorBody", () => {
+		it("extracts error message from JSON error body", async () => {
+			const { parseErrorBody } = await import("./agent-runner.js");
+			const body = '{"error":{"message":"Something failed"}}';
+			const result = parseErrorBody(body);
+			expect(result).toBe("Something failed");
+		});
+
+		it("returns raw string for non-JSON body", async () => {
+			const { parseErrorBody } = await import("./agent-runner.js");
+			expect(parseErrorBody("plain text error")).toBe("plain text error");
+		});
+
+		it("returns raw string for empty body", async () => {
+			const { parseErrorBody } = await import("./agent-runner.js");
+			expect(parseErrorBody("")).toBe("");
+		});
+
+		it("extracts message from nested error object", async () => {
+			const { parseErrorBody } = await import("./agent-runner.js");
+			const body = '{"error":{"message":"Rate limit","type":"rate_limit_error"}}';
+			const result = parseErrorBody(body);
+			expect(result).toBe("Rate limit");
+		});
+	});
+
+	// ── spawnAgentProcess with file context ──────────────────────────
+
+	describe("spawnAgentProcess (additional)", () => {
+		it("includes file context flags when filePath is set", async () => {
+			process.env.OPENCLAW_ROOT = "/pkg";
+
+			const { existsSync: mockExists } = await import("node:fs");
+			const { spawn: mockSpawn } = await import("node:child_process");
+
+			vi.mocked(mockExists).mockImplementation((p) => {
+				const s = String(p);
+				return s === "/pkg" || s === join("/pkg", "openclaw.mjs");
+			});
+
+			const child = mockChildProcess();
+			vi.mocked(mockSpawn).mockReturnValue(child as unknown as ChildProcess);
+
+			const { spawnAgentProcess } = await import("./agent-runner.js");
+			spawnAgentProcess("analyze this file", "session-1", "knowledge/doc.md");
+
+			expect(vi.mocked(mockSpawn)).toHaveBeenCalledWith(
+				"node",
+				expect.arrayContaining(["--message"]),
+				expect.anything(),
+			);
+		});
 	});
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isReportFile,
+  isCodeFile,
   classifyFileType,
   reportTitleToSlug,
   panelColSpan,
@@ -34,6 +35,66 @@ describe("isReportFile", () => {
 
   it("returns false for empty string", () => {
     expect(isReportFile("")).toBe(false);
+  });
+});
+
+// ─── isCodeFile ───
+
+describe("isCodeFile", () => {
+  it("returns true for .ts files", () => {
+    expect(isCodeFile("index.ts")).toBe(true);
+  });
+
+  it("returns true for .tsx files", () => {
+    expect(isCodeFile("component.tsx")).toBe(true);
+  });
+
+  it("returns true for .py files", () => {
+    expect(isCodeFile("script.py")).toBe(true);
+  });
+
+  it("returns true for .go files", () => {
+    expect(isCodeFile("main.go")).toBe(true);
+  });
+
+  it("returns true for .rs files", () => {
+    expect(isCodeFile("lib.rs")).toBe(true);
+  });
+
+  it("returns true for .sql files", () => {
+    expect(isCodeFile("query.sql")).toBe(true);
+  });
+
+  it("returns true for .yaml files", () => {
+    expect(isCodeFile("config.yaml")).toBe(true);
+  });
+
+  it("returns true for .json files", () => {
+    expect(isCodeFile("data.json")).toBe(true);
+  });
+
+  it("returns true for .sh files", () => {
+    expect(isCodeFile("deploy.sh")).toBe(true);
+  });
+
+  it("returns false for .md files", () => {
+    expect(isCodeFile("readme.md")).toBe(false);
+  });
+
+  it("returns false for .txt files", () => {
+    expect(isCodeFile("notes.txt")).toBe(false);
+  });
+
+  it("returns false for .png files", () => {
+    expect(isCodeFile("image.png")).toBe(false);
+  });
+
+  it("returns true for Makefile (makefile is a code extension)", () => {
+    expect(isCodeFile("Makefile")).toBe(true);
+  });
+
+  it("returns false for files with non-code extension", () => {
+    expect(isCodeFile("archive.zip")).toBe(false);
   });
 });
 
@@ -196,6 +257,22 @@ describe("formatChartValue", () => {
 
   it("formats 999 as integer", () => {
     expect(formatChartValue(999)).toBe("999");
+  });
+
+  it("formats object as JSON string", () => {
+    expect(formatChartValue({ key: "val" })).toBe('{"key":"val"}');
+  });
+
+  it("formats array as JSON string", () => {
+    expect(formatChartValue([1, 2, 3])).toBe("[1,2,3]");
+  });
+
+  it("formats negative float", () => {
+    expect(formatChartValue(-3.14)).toBe("-3.14");
+  });
+
+  it("formats very large number", () => {
+    expect(formatChartValue(999_999_999)).toBe("1000.0M");
   });
 });
 

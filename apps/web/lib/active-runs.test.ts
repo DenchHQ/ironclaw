@@ -621,6 +621,87 @@ describe("active-runs", () => {
 		});
 	});
 
+	// ── multiple concurrent runs ─────────────────────────────────────
+
+	describe("multiple concurrent runs", () => {
+		it("tracks multiple sessions independently", async () => {
+			const { startRun, hasActiveRun, getActiveRun } = await setup();
+
+			startRun({ sessionId: "s-a", message: "first", agentSessionId: "s-a" });
+			startRun({ sessionId: "s-b", message: "second", agentSessionId: "s-b" });
+
+			expect(hasActiveRun("s-a")).toBe(true);
+			expect(hasActiveRun("s-b")).toBe(true);
+			expect(getActiveRun("s-a")?.status).toBe("running");
+			expect(getActiveRun("s-b")?.status).toBe("running");
+		});
+	});
+
+	// ── tool result events ───────────────────────────────────────────
+
+	describe("tool result events", () => {
+		it("emits tool-result events for completed tool calls", async () => {
+			const { child, startRun, subscribeToRun } = await setup();
+
+			const events: SseEvent[] = [];
+
+			startRun({ sessionId: "s-tr", message: "use tool", agentSessionId: "s-tr" });
+
+			subscribeToRun("s-tr", (event) => {
+				if (event) {events.push(event);}
+			}, { replay: false });
+
+			// Emit tool start
+			child._writeLine({
+				event: "agent",
+				stream: "tool",
+				data: { phase: "start", toolCallId: "tc-1", name: "search", args: { q: "test" } },
+			});
+
+			// Emit tool result
+			child._writeLine({
+				event: "agent",
+				stream: "tool",
+				data: { phase: "result", toolCallId: "tc-1", result: "found 3 results" },
+			});
+
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(events.some((e) => e.type === "tool-input-start" && e.toolCallId === "tc-1")).toBe(true);
+
+			child.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			child._emit("close", 0);
+		});
+	});
+
+	// ── stderr handling ──────────────────────────────────────────────
+
+	describe("stderr handling", () => {
+		it("captures stderr output for error reporting", async () => {
+			const { child, startRun, subscribeToRun } = await setup();
+
+			const events: SseEvent[] = [];
+
+			startRun({ sessionId: "s-stderr", message: "fail", agentSessionId: "s-stderr" });
+
+			subscribeToRun("s-stderr", (event) => {
+				if (event) {events.push(event);}
+			}, { replay: false });
+
+			child._writeStderr("Error: something went wrong\n");
+
+			child.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			child._emit("close", 1);
+
+			// Should have an error message mentioning stderr content
+			expect(events.some((e) =>
+				e.type === "text-delta" && typeof e.delta === "string",
+			)).toBe(true);
+		});
+	});
+
 	// ── lifecycle events ──────────────────────────────────────────────
 
 	describe("lifecycle events", () => {

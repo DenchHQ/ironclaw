@@ -309,4 +309,83 @@ describe("checkSqlSafety", () => {
     // The SQL starts with SELECT, so it should be allowed
     expect(checkSqlSafety('SELECT "delete_count", "update_time" FROM v_stats')).toBeNull();
   });
+
+  it("allows GRANT (not in forbidden list, only checks start keyword)", () => {
+    // checkSqlSafety only blocks specific forbidden start keywords
+    expect(checkSqlSafety("GRANT ALL ON users TO admin")).toBeNull();
+  });
+
+  it("allows empty SQL (no forbidden keyword match)", () => {
+    // Empty string doesn't start with any forbidden keyword
+    expect(checkSqlSafety("")).toBeNull();
+  });
+
+  it("allows EXPLAIN SELECT (not in forbidden list)", () => {
+    expect(checkSqlSafety("EXPLAIN SELECT * FROM users")).toBeNull();
+  });
+});
+
+// ─── Edge cases for buildFilterClauses ───
+
+describe("buildFilterClauses (edge cases)", () => {
+  it("handles unicode in select filter values", () => {
+    const filters: FilterEntry[] = [
+      { id: "s", column: "Name", value: { type: "select", value: "日本語" } },
+    ];
+    const clauses = buildFilterClauses(filters);
+    expect(clauses[0]).toBe(`"Name" = '日本語'`);
+  });
+
+  it("handles very long column names", () => {
+    const longName = "a".repeat(200);
+    const filters: FilterEntry[] = [
+      { id: "s", column: longName, value: { type: "select", value: "x" } },
+    ];
+    const clauses = buildFilterClauses(filters);
+    expect(clauses[0]).toContain(longName);
+  });
+
+  it("handles NaN min in number filter", () => {
+    const filters: FilterEntry[] = [
+      { id: "n", column: "Amount", value: { type: "number", min: NaN } },
+    ];
+    const clauses = buildFilterClauses(filters);
+    // NaN is !== undefined so it should produce a clause
+    expect(clauses).toHaveLength(1);
+    expect(clauses[0]).toContain("NaN");
+  });
+
+  it("handles max of 0 in number filter", () => {
+    const filters: FilterEntry[] = [
+      { id: "n", column: "Score", value: { type: "number", max: 0 } },
+    ];
+    expect(buildFilterClauses(filters)).toEqual([`CAST("Score" AS NUMERIC) <= 0`]);
+  });
+
+  it("handles multiSelect with single-quote values", () => {
+    const filters: FilterEntry[] = [
+      { id: "m", column: "Tag", value: { type: "multiSelect", values: ["it's", "they're"] } },
+    ];
+    const clauses = buildFilterClauses(filters);
+    expect(clauses[0]).toBe(`"Tag" IN ('it''s', 'they''re')`);
+  });
+});
+
+// ─── Edge cases for injectFilters ───
+
+describe("injectFilters (edge cases)", () => {
+  it("handles SQL with multiple semicolons", () => {
+    const sql = "SELECT * FROM t;;";
+    const clauses = [`"x" = '1'`];
+    const result = injectFilters(sql, clauses);
+    expect(result).toContain("__report_data");
+  });
+
+  it("handles SQL with nested CTE", () => {
+    const sql = "WITH a AS (WITH b AS (SELECT 1) SELECT * FROM b) SELECT * FROM a";
+    const clauses = [`"x" = '1'`];
+    const result = injectFilters(sql, clauses);
+    expect(result).toContain("__report_data");
+    expect(result).toContain("WITH a AS");
+  });
 });
