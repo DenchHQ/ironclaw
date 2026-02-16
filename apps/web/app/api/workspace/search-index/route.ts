@@ -11,6 +11,13 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** Safely convert an unknown DB value to a display string. */
+function dbStr(val: unknown): string {
+  if (val == null) {return "";}
+  if (typeof val === "object") {return JSON.stringify(val);}
+  return String(val as string | number | boolean);
+}
+
 // --- Types ---
 
 export type SearchIndexItem = {
@@ -209,15 +216,15 @@ async function buildEntryItems(): Promise<SearchIndexItem[]> {
     }
 
     for (const entry of entries) {
-      const entryId = String(entry.entry_id ?? "");
+      const entryId = dbStr(entry.entry_id);
       if (!entryId) {continue;}
 
-      const displayValue = String(entry[displayField] ?? "");
+      const displayValue = dbStr(entry[displayField]);
       const fieldPreview: Record<string, string> = {};
       for (const f of previewFields) {
         const val = entry[f.name];
         if (val != null && val !== "") {
-          fieldPreview[f.name] = String(val);
+          fieldPreview[f.name] = dbStr(val);
         }
       }
 

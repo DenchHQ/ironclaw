@@ -492,10 +492,8 @@ export function parseErrorFromStderr(stderr: string): string | undefined {
 	if (!stderr) {return undefined;}
 
 	// Strip ANSI escape codes
-	const clean = stderr.replace(
-		/\x1B\[[0-9;]*[A-Za-z]/g,
-		"",
-	);
+	// eslint-disable-next-line no-control-regex
+	const clean = stderr.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
 
 	// Look for JSON error bodies (e.g. from API responses)
 	const jsonMatch = clean.match(/\{"error":\{[^}]*"message":"([^"]+)"[^}]*\}/);
