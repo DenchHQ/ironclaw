@@ -3,7 +3,7 @@ import { join } from "node:path";
 import {
   resolveWorkspaceRoot,
   parseSimpleYaml,
-  duckdbQuery,
+  duckdbQueryAsync,
   duckdbPath,
   isDatabaseFile,
 } from "@/lib/workspace";
@@ -161,15 +161,15 @@ function flattenTree(
 }
 
 /** Fetch all entries from all objects and produce search items. */
-function buildEntryItems(): SearchIndexItem[] {
+async function buildEntryItems(): Promise<SearchIndexItem[]> {
   const items: SearchIndexItem[] = [];
 
-  const objects = duckdbQuery<ObjectRow>(
+  const objects = await duckdbQueryAsync<ObjectRow>(
     "SELECT * FROM objects ORDER BY name",
   );
 
   for (const obj of objects) {
-    const fields = duckdbQuery<FieldRow>(
+    const fields = await duckdbQueryAsync<FieldRow>(
       `SELECT * FROM fields WHERE object_id = '${sqlEscape(obj.id)}' ORDER BY sort_order`,
     );
     const displayField = resolveDisplayField(obj, fields);
@@ -179,12 +179,12 @@ function buildEntryItems(): SearchIndexItem[] {
       .slice(0, 4);
 
     // Try PIVOT view first, then raw EAV
-    let entries: Record<string, unknown>[] = duckdbQuery(
+    let entries: Record<string, unknown>[] = await duckdbQueryAsync(
       `SELECT * FROM v_${obj.name} ORDER BY created_at DESC LIMIT 500`,
     );
 
     if (entries.length === 0) {
-      const rawRows = duckdbQuery<EavRow>(
+      const rawRows = await duckdbQueryAsync<EavRow>(
         `SELECT e.id as entry_id, e.created_at, e.updated_at,
                 f.name as field_name, ef.value
          FROM entries e
@@ -247,7 +247,7 @@ export async function GET() {
   if (root) {
     const dbObjects = new Map<string, ObjectRow>();
     if (duckdbPath()) {
-      const objs = duckdbQuery<ObjectRow>(
+      const objs = await duckdbQueryAsync<ObjectRow>(
         "SELECT * FROM objects",
       );
       for (const o of objs) {dbObjects.set(o.name, o);}
@@ -259,7 +259,7 @@ export async function GET() {
 
   // 2. Entries from all objects
   if (duckdbPath()) {
-    items.push(...buildEntryItems());
+    items.push(...await buildEntryItems());
   }
 
   return Response.json({ items });

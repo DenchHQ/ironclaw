@@ -105,7 +105,7 @@ export function extractToolResult(
 }
 
 export type RunAgentOptions = {
-	/** When set, the agent runs in an isolated session (e.g. file-scoped subagent). */
+	/** When set, the agent runs in an isolated web chat session. */
 	sessionId?: string;
 };
 
@@ -180,8 +180,8 @@ export function spawnAgentProcess(
 	];
 
 	if (agentSessionId) {
-		const sessionKey = `agent:main:subagent:${agentSessionId}`;
-		args.push("--session-key", sessionKey, "--lane", "subagent");
+		const sessionKey = `agent:main:web:${agentSessionId}`;
+		args.push("--session-key", sessionKey, "--lane", "web", "--channel", "webchat");
 	}
 
 	return spawn("node", args, {

@@ -5,6 +5,7 @@ import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
 import { resolveUserPath } from "../utils.js";
+import { seedWorkspaceDuckDB } from "./workspace-seed.js";
 import { resolveWorkspaceTemplateDir } from "./workspace-templates.js";
 
 export function resolveDefaultAgentWorkspaceDir(
@@ -100,6 +101,7 @@ type WorkspaceOnboardingState = {
   version: typeof WORKSPACE_STATE_VERSION;
   bootstrapSeededAt?: string;
   onboardingCompletedAt?: string;
+  duckdbSeededAt?: string;
 };
 
 /** Set of recognized bootstrap filenames for runtime validation */
@@ -149,6 +151,7 @@ function parseWorkspaceOnboardingState(raw: string): WorkspaceOnboardingState | 
     const parsed = JSON.parse(raw) as {
       bootstrapSeededAt?: unknown;
       onboardingCompletedAt?: unknown;
+      duckdbSeededAt?: unknown;
     };
     if (!parsed || typeof parsed !== "object") {
       return null;
@@ -159,6 +162,7 @@ function parseWorkspaceOnboardingState(raw: string): WorkspaceOnboardingState | 
         typeof parsed.bootstrapSeededAt === "string" ? parsed.bootstrapSeededAt : undefined,
       onboardingCompletedAt:
         typeof parsed.onboardingCompletedAt === "string" ? parsed.onboardingCompletedAt : undefined,
+      duckdbSeededAt: typeof parsed.duckdbSeededAt === "string" ? parsed.duckdbSeededAt : undefined,
     };
   } catch {
     return null;
@@ -353,6 +357,23 @@ export async function ensureAgentWorkspace(params?: {
         markState({ bootstrapSeededAt: nowIso() });
       }
     }
+  }
+
+  // Seed DuckDB workspace with schema and sample data (best-effort).
+  // Always verify the actual file — don't trust the state flag alone
+  // (the db may have been deleted while the state persisted).
+  const dbExists = await fileExists(path.join(dir, "workspace.duckdb"));
+  if (!dbExists) {
+    try {
+      const seeded = await seedWorkspaceDuckDB(dir);
+      if (seeded) {
+        markState({ duckdbSeededAt: nowIso() });
+      }
+    } catch {
+      // DuckDB seeding is best-effort; don't fail workspace creation
+    }
+  } else if (!state.duckdbSeededAt) {
+    markState({ duckdbSeededAt: nowIso() });
   }
 
   if (stateDirty) {

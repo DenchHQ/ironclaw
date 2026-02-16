@@ -241,9 +241,11 @@ describe("agent-runner", () => {
 				"node",
 				expect.arrayContaining([
 					"--session-key",
-					"agent:main:subagent:session-123",
+					"agent:main:web:session-123",
 					"--lane",
-					"subagent",
+					"web",
+					"--channel",
+					"webchat",
 				]),
 				expect.anything(),
 			);

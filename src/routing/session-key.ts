@@ -6,6 +6,7 @@ export {
   isCronSessionKey,
   isAcpSessionKey,
   isSubagentSessionKey,
+  isWebSessionKey,
   parseAgentSessionKey,
   type ParsedAgentSessionKey,
 } from "../sessions/session-key-utils.js";

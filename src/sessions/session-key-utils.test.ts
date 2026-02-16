@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getSubagentDepth, isCronSessionKey } from "./session-key-utils.js";
+import { getSubagentDepth, isCronSessionKey, isWebSessionKey } from "./session-key-utils.js";
 
 describe("getSubagentDepth", () => {
   it("returns 0 for non-subagent session keys", () => {
@@ -28,5 +28,24 @@ describe("isCronSessionKey", () => {
     expect(isCronSessionKey("agent:main:subagent:worker")).toBe(false);
     expect(isCronSessionKey("cron:job-1")).toBe(false);
     expect(isCronSessionKey(undefined)).toBe(false);
+  });
+});
+
+describe("isWebSessionKey", () => {
+  it("matches web session keys with agent prefix", () => {
+    expect(isWebSessionKey("agent:main:web:session-123")).toBe(true);
+    expect(isWebSessionKey("agent:main:web:abc-def")).toBe(true);
+  });
+
+  it("matches bare web: prefix", () => {
+    expect(isWebSessionKey("web:session-123")).toBe(true);
+  });
+
+  it("does not match non-web sessions", () => {
+    expect(isWebSessionKey("agent:main:main")).toBe(false);
+    expect(isWebSessionKey("agent:main:subagent:worker")).toBe(false);
+    expect(isWebSessionKey("agent:main:cron:job-1")).toBe(false);
+    expect(isWebSessionKey(undefined)).toBe(false);
+    expect(isWebSessionKey("")).toBe(false);
   });
 });

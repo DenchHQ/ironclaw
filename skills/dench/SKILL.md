@@ -1,10 +1,10 @@
 ---
-name: dench
+name: database-crm-system
 description: Manage Database and everything else in the workspace - objects, fields, entries via DuckDB and documents as markdown files in a nested knowledge tree. Acts as your second brain.
 metadata: { "openclaw": { "inject": true, "always": true, "emoji": "📊" } }
 ---
 
-# Dench Workspace
+# CRM / Database in Workspace / Guide on handling any data
 
 You manage a Dench workspace stored at `~/.openclaw/workspace`.
 All structured data lives in **DuckDB** (`~/.openclaw/workspace/workspace.duckdb`). Documents are **markdown files** in `~/.openclaw/workspace/**`. Organization context is in `~/.openclaw/workspace/workspace_context.yaml` (READ-ONLY).

@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, exec } from "node:child_process";
+import { promisify } from "node:util";
 import { join, resolve, normalize, relative } from "node:path";
 import { homedir } from "node:os";
+
+const execAsync = promisify(exec);
 
 /**
  * Resolve the workspace directory, checking in order:
@@ -88,6 +91,9 @@ export function resolveDuckdbBin(): string | null {
 /**
  * Execute a DuckDB query and return parsed JSON rows.
  * Uses the duckdb CLI with -json output format.
+ *
+ * @deprecated Prefer `duckdbQueryAsync` in server route handlers to avoid
+ * blocking the Node.js event loop (which freezes the standalone server).
  */
 export function duckdbQuery<T = Record<string, unknown>>(
   sql: string,
@@ -109,6 +115,37 @@ export function duckdbQuery<T = Record<string, unknown>>(
     });
 
     const trimmed = result.trim();
+    if (!trimmed || trimmed === "[]") {return [];}
+    return JSON.parse(trimmed) as T[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Async version of duckdbQuery — does not block the event loop.
+ * Always prefer this in Next.js route handlers (especially the standalone build
+ * which is single-threaded; a blocking execSync freezes the entire server).
+ */
+export async function duckdbQueryAsync<T = Record<string, unknown>>(
+  sql: string,
+): Promise<T[]> {
+  const db = duckdbPath();
+  if (!db) {return [];}
+
+  const bin = resolveDuckdbBin();
+  if (!bin) {return [];}
+
+  try {
+    const escapedSql = sql.replace(/'/g, "'\\''");
+    const { stdout } = await execAsync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+      encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
+      shell: "/bin/sh",
+    });
+
+    const trimmed = stdout.trim();
     if (!trimmed || trimmed === "[]") {return [];}
     return JSON.parse(trimmed) as T[];
   } catch {
@@ -180,6 +217,8 @@ export function isDatabaseFile(filename: string): boolean {
 /**
  * Execute a DuckDB query against an arbitrary database file and return parsed JSON rows.
  * This is used by the database viewer to introspect any .duckdb/.sqlite/.db file.
+ *
+ * @deprecated Prefer `duckdbQueryOnFileAsync` in route handlers.
  */
 export function duckdbQueryOnFile<T = Record<string, unknown>>(
   dbFilePath: string,
@@ -198,6 +237,31 @@ export function duckdbQueryOnFile<T = Record<string, unknown>>(
     });
 
     const trimmed = result.trim();
+    if (!trimmed || trimmed === "[]") {return [];}
+    return JSON.parse(trimmed) as T[];
+  } catch {
+    return [];
+  }
+}
+
+/** Async version of duckdbQueryOnFile — does not block the event loop. */
+export async function duckdbQueryOnFileAsync<T = Record<string, unknown>>(
+  dbFilePath: string,
+  sql: string,
+): Promise<T[]> {
+  const bin = resolveDuckdbBin();
+  if (!bin) {return [];}
+
+  try {
+    const escapedSql = sql.replace(/'/g, "'\\''");
+    const { stdout } = await execAsync(`'${bin}' -json '${dbFilePath}' '${escapedSql}'`, {
+      encoding: "utf-8",
+      timeout: 15_000,
+      maxBuffer: 10 * 1024 * 1024,
+      shell: "/bin/sh",
+    });
+
+    const trimmed = stdout.trim();
     if (!trimmed || trimmed === "[]") {return [];}
     return JSON.parse(trimmed) as T[];
   } catch {
