@@ -255,7 +255,7 @@ function classifyTool(
 				: "";
 		if (action === "open" || action === "navigate") {return "fetch";}
 		if (action === "screenshot") {return "image";}
-		return "fetch"; // default: most browser actions involve a page
+		return "generic"; // act/snapshot/status etc. have no URL
 	}
 
 	if (
@@ -882,7 +882,7 @@ function FetchGroup({ items }: { items: ToolPart[] }) {
 									className="flex-1 min-w-0 truncate"
 									style={{ color: "var(--color-text)" }}
 								>
-									{domain?.replace(/^www\./, "") ?? "Loading..."}
+									{domain?.replace(/^www\./, "") ?? url ?? "Fetching..."}
 								</span>
 								{tool.status === "running" ? (
 									<span
