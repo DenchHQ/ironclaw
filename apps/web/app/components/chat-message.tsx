@@ -556,12 +556,16 @@ const mdComponents: Components = {
 			</a>
 		);
 	},
-	// Render images with loading=lazy
-	img: ({ src, alt, ...props }) => (
-		// eslint-disable-next-line @next/next/no-img-element
-		<img src={src} alt={alt ?? ""} loading="lazy" {...props} />
-	),
-	// Syntax-highlighted fenced code blocks
+	// Render images — route local file paths through raw-file API
+	img: ({ src, alt, ...props }) => {
+		const resolvedSrc = typeof src === "string" && !src.startsWith("http://") && !src.startsWith("https://") && !src.startsWith("data:")
+			? `/api/workspace/raw-file?path=${encodeURIComponent(src)}`
+			: src;
+		return (
+			// eslint-disable-next-line @next/next/no-img-element
+			<img src={resolvedSrc} alt={alt ?? ""} loading="lazy" {...props} />
+		);
+	},
 	pre: ({ children, ...props }) => {
 		// react-markdown wraps code blocks in <pre><code>...
 		// Extract the code element to get lang + content
