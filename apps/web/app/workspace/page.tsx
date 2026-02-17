@@ -223,6 +223,8 @@ function WorkspacePageInner() {
 
   // Chat panel ref for session management
   const chatRef = useRef<ChatPanelHandle>(null);
+  // Compact (file-scoped) chat panel ref for sidebar drag-and-drop
+  const compactChatRef = useRef<ChatPanelHandle>(null);
 
   // Live-reactive tree via SSE watcher (with browse-mode support)
   const {
@@ -575,9 +577,11 @@ function WorkspacePageInner() {
     router.replace("/workspace", { scroll: false });
   }, [router]);
 
-  // Insert a file mention into the chat editor when a sidebar item is dropped on the chat input
+  // Insert a file mention into the chat editor when a sidebar item is dropped on the chat input.
+  // Try the main chat panel first; fall back to the compact (file-scoped) panel.
   const handleSidebarExternalDrop = useCallback((node: TreeNode) => {
-    chatRef.current?.insertFileMention?.(node.name, node.path);
+    const target = chatRef.current ?? compactChatRef.current;
+    target?.insertFileMention?.(node.name, node.path);
   }, []);
 
   // Handle file search selection: navigate sidebar to the file's location and open it
@@ -1094,6 +1098,7 @@ function WorkspacePageInner() {
                   }}
                 >
                   <ChatPanel
+                    ref={compactChatRef}
                     compact
                     fileContext={fileContext}
                     onFileChanged={handleFileChanged}
