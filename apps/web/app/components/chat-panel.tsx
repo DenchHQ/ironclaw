@@ -1353,7 +1353,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		return (
 			<div
 				ref={scrollContainerRef}
-				className="h-full overflow-y-auto"
+				className="h-full overflow-y-auto [scrollbar-gutter:stable]"
 			>
 				<div className="flex flex-col min-h-full">
 				{/* Header — sticky glass bar */}
@@ -1603,12 +1603,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					>
 						<div
 							data-chat-drop-target=""
-							className="rounded-3xl overflow-hidden chat-input-drop-target"
+							className="rounded-3xl overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow] duration-150 ease-out data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!"
 							style={{
 								background:
 									"var(--color-chat-input-bg)",
-								border: "1px solid var(--color-border)",
-								boxShadow: "0 0 32px rgba(0,0,0,0.07)",
+								borderColor: "var(--color-border)",
 							}}
 						onDragOver={(e) => {
 							if (
@@ -1786,56 +1785,50 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 										</svg>
 									</button>
 								</div>
-							{/* Send / Stop / Queue buttons */}
+							{/* Send / Stop button (single button, toggles role) */}
 							<div className="flex items-center gap-1.5">
-							{isStreaming && (
-								<button
-									type="button"
-									onClick={() => handleStop()}
-									className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center`}
-									style={{
-										background: "var(--color-text)",
-										color: "var(--color-bg)",
-									}}
-									title="Stop generating"
-								>
-									<svg
-										width="8"
-										height="8"
-										viewBox="0 0 10 10"
-										fill="currentColor"
+								{isStreaming ? (
+									<button
+										type="button"
+										onClick={() => handleStop()}
+										className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center`}
+										style={{
+											background: "var(--color-text)",
+											color: "var(--color-bg)",
+										}}
+										title="Stop generating"
 									>
-										<rect width="10" height="10" rx="1.5" />
-									</svg>
-								</button>
-							)}
-								<button
-									type="button"
-									onClick={() => {
-										editorRef.current?.submit();
-									}}
-									disabled={
-										(editorEmpty &&
-											attachedFiles.length ===
-												0) ||
-										loadingSession
-									}
-									className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed`}
-									style={{
-										background:
-											!editorEmpty ||
-											attachedFiles.length >
-												0
-												? isStreaming
-													? "var(--color-text-muted)"
-													: "var(--color-accent)"
-												: "var(--color-border-strong)",
-										color: "white",
-									}}
-									title={isStreaming ? "Queue message" : "Send message"}
-								>
-									{isStreaming && !editorEmpty ? (
-										/* Queue icon: stacked lines */
+										<svg
+											width="8"
+											height="8"
+											viewBox="0 0 10 10"
+											fill="currentColor"
+										>
+											<rect width="10" height="10" rx="1.5" />
+										</svg>
+									</button>
+								) : (
+									<button
+										type="button"
+										onClick={() => {
+											editorRef.current?.submit();
+										}}
+										disabled={
+											(editorEmpty &&
+												attachedFiles.length === 0) ||
+											loadingSession
+										}
+										className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed`}
+										style={{
+											background:
+												!editorEmpty ||
+												attachedFiles.length > 0
+													? "var(--color-accent)"
+													: "var(--color-border-strong)",
+											color: "white",
+										}}
+										title="Send message"
+									>
 										<svg
 											width="14"
 											height="14"
@@ -1846,28 +1839,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 											strokeLinecap="round"
 											strokeLinejoin="round"
 										>
-											<path d="M16 3h5v5" />
-											<path d="m21 3-7 7" />
 											<path d="M12 19V5" />
 											<path d="m5 12 7-7 7 7" />
 										</svg>
-									) : (
-										/* Normal send arrow */
-									<svg
-										width="14"
-										height="14"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="2.5"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									>
-										<path d="M12 19V5" />
-										<path d="m5 12 7-7 7 7" />
-									</svg>
-									)}
-								</button>
+									</button>
+								)}
 							</div>
 							</div>
 						</div>
@@ -1884,16 +1860,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					onSelect={handleFilesSelected}
 				/>
 
-				{/* Drop highlight for sidebar drag-and-drop */}
-				<style>{`
-					.chat-input-drop-target[data-drag-hover] {
-						outline: 2px dashed var(--color-accent) !important;
-						outline-offset: -2px;
-						box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 15%, transparent),
-						            0 0 32px rgba(0,0,0,0.07) !important;
-						transition: outline 150ms ease, box-shadow 150ms ease;
-					}
-				`}</style>
 			</div>
 		);
 	},
