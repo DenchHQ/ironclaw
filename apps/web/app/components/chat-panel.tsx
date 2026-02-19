@@ -458,6 +458,15 @@ type QueuedMessage = {
 	createdAt: number;
 };
 
+export type SubagentSpawnInfo = {
+	childSessionKey: string;
+	runId: string;
+	task: string;
+	label?: string;
+	parentSessionId: string;
+	status?: "running" | "completed" | "error";
+};
+
 type ChatPanelProps = {
 	/** When set, scopes sessions to this file and prepends content as context. */
 	fileContext?: FileContext;
@@ -473,6 +482,10 @@ type ChatPanelProps = {
 	onActiveSessionChange?: (sessionId: string | null) => void;
 	/** Called when session list needs refresh (for external sidebar). */
 	onSessionsChange?: () => void;
+	/** Called when the agent spawns a subagent. */
+	onSubagentSpawned?: (info: SubagentSpawnInfo) => void;
+	/** Called when user clicks a subagent card in the chat to view its output. */
+	onSubagentClick?: (task: string) => void;
 };
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
@@ -485,6 +498,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			onFileChanged,
 			onActiveSessionChange,
 			onSessionsChange,
+			onSubagentSpawned,
+			onSubagentClick,
 		},
 		ref,
 	) {
@@ -864,6 +879,43 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			void handleSessionSelect(initialSessionId);
 			// eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
 		}, []);
+
+		// ── Poll for subagent spawns during active streaming ──
+		useEffect(() => {
+			if (!currentSessionId || !onSubagentSpawned) {return;}
+			let cancelled = false;
+
+			const poll = async () => {
+				try {
+					const res = await fetch(
+						`/api/chat/subagents?sessionId=${encodeURIComponent(currentSessionId)}`,
+					);
+					if (cancelled || !res.ok) {return;}
+					const data = await res.json();
+					const subagents: Array<{
+						sessionKey: string;
+						runId: string;
+						task: string;
+						label?: string;
+						status: "running" | "completed" | "error";
+					}> = data.subagents ?? [];
+					for (const sa of subagents) {
+						onSubagentSpawned({
+							childSessionKey: sa.sessionKey,
+							runId: sa.runId,
+							task: sa.task,
+							label: sa.label,
+							parentSessionId: currentSessionId,
+							status: sa.status,
+						});
+					}
+				} catch { /* ignore */ }
+			};
+
+			void poll();
+			const id = setInterval(poll, 3_000);
+			return () => { cancelled = true; clearInterval(id); };
+		}, [currentSessionId, onSubagentSpawned]);
 
 		// ── Post-stream side-effects (file-reload, session refresh) ──
 		// Message persistence is handled server-side by ActiveRunManager,
@@ -1489,13 +1541,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						<div
 							className={`${compact ? "" : "max-w-2xl mx-auto"} py-3`}
 						>
-							{messages.map((message, i) => (
-								<ChatMessage
-									key={message.id}
-									message={message}
-									isStreaming={isStreaming && i === messages.length - 1}
-								/>
-							))}
+						{messages.map((message, i) => (
+							<ChatMessage
+								key={message.id}
+								message={message}
+								isStreaming={isStreaming && i === messages.length - 1}
+								onSubagentClick={onSubagentClick}
+							/>
+						))}
 							<div ref={messagesEndRef} />
 						</div>
 					)}

@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { FileManagerTree, type TreeNode } from "./file-manager-tree";
+import { ProfileSwitcher } from "./profile-switcher";
+import { CreateWorkspaceDialog } from "./create-workspace-dialog";
 
 /** Shape returned by /api/workspace/suggest-files */
 type SuggestItem = {
@@ -37,6 +39,10 @@ type WorkspaceSidebarProps = {
 	mobile?: boolean;
 	/** Close the mobile drawer. */
 	onClose?: () => void;
+	/** Active workspace profile name (null = default). */
+	activeProfile?: string | null;
+	/** Called after the user switches to a different profile. */
+	onProfileSwitch?: () => void;
 };
 
 function HomeIcon() {
@@ -393,8 +399,11 @@ export function WorkspaceSidebar({
 	onExternalDrop,
 	mobile,
 	onClose,
+	activeProfile,
+	onProfileSwitch,
 }: WorkspaceSidebarProps) {
 	const isBrowsing = browseDir != null;
+	const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
 
 	const sidebar = (
 		<aside
@@ -479,17 +488,48 @@ export function WorkspaceSidebar({
 								{orgName || "Workspace"}
 							</div>
 							<div
-								className="text-[11px]"
+								className="text-[11px] flex items-center gap-1"
 								style={{
 									color: "var(--color-text-muted)",
 								}}
 							>
-								Ironclaw
+								<span>Ironclaw</span>
+								{activeProfile && activeProfile !== "default" && (
+									<span
+										className="px-1 py-0.5 rounded text-[10px]"
+										style={{
+											background: "var(--color-accent-light)",
+											color: "var(--color-accent)",
+										}}
+									>
+										{activeProfile}
+									</span>
+								)}
 							</div>
 						</div>
 					</>
 				)}
 			</div>
+
+			{/* Profile switcher — only in workspace mode */}
+			{!isBrowsing && (
+				<div
+					className="px-3 py-1.5 border-b"
+					style={{ borderColor: "var(--color-border)" }}
+				>
+					<ProfileSwitcher
+						onProfileSwitch={onProfileSwitch}
+						onCreateWorkspace={() => setShowCreateWorkspace(true)}
+					/>
+				</div>
+			)}
+
+			{/* Create workspace dialog */}
+			<CreateWorkspaceDialog
+				isOpen={showCreateWorkspace}
+				onClose={() => setShowCreateWorkspace(false)}
+				onCreated={onProfileSwitch}
+			/>
 
 			{/* File search */}
 			{onFileSearchSelect && (

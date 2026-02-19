@@ -1,10 +1,10 @@
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveOpenClawStateDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
-const AGENTS_DIR = join(homedir(), ".openclaw", "agents");
+const AGENTS_DIR = join(resolveOpenClawStateDir(), "agents");
 
 type MessagePart =
   | { type: "text"; text: string }

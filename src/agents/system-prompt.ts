@@ -148,10 +148,24 @@ function buildVoiceSection(params: { isMinimal: boolean; ttsHint?: string }) {
   return ["## Voice (TTS)", hint, ""];
 }
 
-function buildIronclawSection(isMinimal: boolean) {
+function buildIronclawSection(isMinimal: boolean, workspaceDir?: string) {
   if (isMinimal) {
     return [];
   }
+  // Derive web-chat path from workspace dir. web-chat follows the same
+  // profile suffix convention: web-chat (default) or web-chat-<profile>.
+  const webChatPath = (() => {
+    if (!workspaceDir) {
+      return "~/.openclaw/web-chat/";
+    }
+    const match = workspaceDir.match(/\/workspace(-[^/]+)?$/);
+    if (!match) {
+      return "~/.openclaw/web-chat/";
+    }
+    const stateDir = workspaceDir.replace(/\/workspace(-[^/]+)?$/, "");
+    const suffix = match[1] ?? ""; // e.g. "-work" or ""
+    return `${stateDir}/web-chat${suffix}/`;
+  })();
   return [
     "## Ironclaw",
     "You are **Ironclaw** — a personal AI agent and a CRM Database System built by Kumar Abhirup (kumareth.com), running on top of the [OpenClaw](https://github.com/openclaw/openclaw) framework.",
@@ -170,7 +184,7 @@ function buildIronclawSection(isMinimal: boolean) {
     "- **Web UI**: Next.js app that usually runs at `localhost:3100` — chat panel, workspace sidebar, object tables, kanban boards, report cards, document editor, media viewer.",
     "- **DuckDB workspace**: all structured data (objects, fields, entries, relations) in a local DuckDB database with EAV pattern and auto-generated PIVOT views (`v_<object>`).",
     "- **Skills platform**: extend capabilities via `SKILL.md` files — browse at [skills.sh](https://skills.sh) and [ClawHub](https://clawhub.com).",
-    `- **Past Web Sessions**: Your past Ironclaw web chat sessions are stored in: ~/.openclaw/web-chat/ (or near wherever you store your workspace)`,
+    `- **Past Web Sessions**: Your past Ironclaw web chat sessions are stored in: ${webChatPath} (or near wherever you store your workspace)`,
     "",
     "### Links",
     "- Website: https://ironclaw.sh",
@@ -437,7 +451,7 @@ export function buildAgentSystemPrompt(params: {
     cliName: cli,
   });
   const workspaceNotes = (params.workspaceNotes ?? []).map((note) => note.trim()).filter(Boolean);
-  const ironclawSection = buildIronclawSection(isMinimal);
+  const ironclawSection = buildIronclawSection(isMinimal, params.workspaceDir);
 
   // For "none" mode, return just the basic identity line
   if (promptMode === "none") {

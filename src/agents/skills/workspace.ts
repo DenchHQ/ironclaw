@@ -265,11 +265,12 @@ export function buildWorkspaceSkillSnapshot(
   const remoteNote = opts?.eligibility?.remote?.note?.trim();
   const prompt = [remoteNote, formatSkillsForPrompt(resolvedSkills)].filter(Boolean).join("\n");
 
-  // Read full content of injected skills
+  // Read full content of injected skills, substituting workspace path placeholders
   const injectedSkills: InjectedSkillContent[] = [];
   for (const entry of injectedEntries) {
-    const content = readSkillContent(entry.skill.filePath);
-    if (content) {
+    const rawContent = readSkillContent(entry.skill.filePath);
+    if (rawContent) {
+      const content = rawContent.replaceAll("~/.openclaw/workspace", workspaceDir);
       injectedSkills.push({ name: entry.skill.name, content });
     }
   }

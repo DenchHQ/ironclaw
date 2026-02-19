@@ -74,6 +74,16 @@ export type DataTableProps<TData, TValue> = {
 	titleIcon?: React.ReactNode;
 	// sticky
 	stickyFirstColumn?: boolean;
+	// server-side pagination
+	serverPagination?: {
+		totalCount: number;
+		page: number;
+		pageSize: number;
+		onPageChange: (page: number) => void;
+		onPageSizeChange: (size: number) => void;
+	};
+	// server-side search callback (replaces client-side fuzzy filter)
+	onServerSearch?: (query: string) => void;
 };
 
 /* ─── Fuzzy filter ─── */
@@ -173,6 +183,8 @@ export function DataTable<TData, TValue>({
 	title,
 	titleIcon,
 	stickyFirstColumn: stickyFirstProp = true,
+	serverPagination,
+	onServerSearch,
 }: DataTableProps<TData, TValue>) {
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [globalFilter, setGlobalFilter] = useState("");
@@ -315,6 +327,11 @@ export function DataTable<TData, TValue>({
 		return cols;
 	}, [columns, selectionColumn, actionsColumn]);
 
+	// Server-side pagination state derived from props
+	const serverPaginationState = serverPagination
+		? { pageIndex: serverPagination.page - 1, pageSize: serverPagination.pageSize }
+		: undefined;
+
 	const table = useReactTable({
 		data,
 		columns: allColumns,
@@ -325,7 +342,7 @@ export function DataTable<TData, TValue>({
 			columnVisibility,
 			rowSelection: rowSelectionState,
 			columnOrder: enableColumnReordering ? columnOrder : undefined,
-			pagination,
+			pagination: serverPaginationState ?? pagination,
 		},
 		onSortingChange: setSorting,
 		onGlobalFilterChange: setGlobalFilter,
@@ -338,11 +355,26 @@ export function DataTable<TData, TValue>({
 				setInternalRowSelection(updater);
 			}
 		},
-		onPaginationChange: setPagination,
+		onPaginationChange: serverPagination
+			? (updater) => {
+				const newVal = typeof updater === "function"
+					? updater(serverPaginationState!)
+					: updater;
+				if (newVal.pageSize !== serverPagination.pageSize) {
+					serverPagination.onPageSizeChange(newVal.pageSize);
+				} else if (newVal.pageIndex !== serverPagination.page - 1) {
+					serverPagination.onPageChange(newVal.pageIndex + 1);
+				}
+			}
+			: setPagination,
 		getCoreRowModel: getCoreRowModel(),
 		getSortedRowModel: enableSorting ? getSortedRowModel() : undefined,
-		getFilteredRowModel: getFilteredRowModel(),
-		getPaginationRowModel: getPaginationRowModel(),
+		getFilteredRowModel: serverPagination ? undefined : getFilteredRowModel(),
+		getPaginationRowModel: serverPagination ? undefined : getPaginationRowModel(),
+		...(serverPagination ? {
+			manualPagination: true,
+			pageCount: Math.ceil(serverPagination.totalCount / serverPagination.pageSize),
+		} : {}),
 		enableRowSelection,
 		enableSorting,
 		globalFilterFn: fuzzyFilter,
@@ -379,7 +411,10 @@ export function DataTable<TData, TValue>({
 						<input
 							type="text"
 							value={globalFilter}
-							onChange={(e) => setGlobalFilter(e.target.value)}
+							onChange={(e) => {
+								setGlobalFilter(e.target.value);
+								onServerSearch?.(e.target.value);
+							}}
 							placeholder={searchPlaceholder}
 							className="w-full pl-9 pr-3 py-1.5 text-xs rounded-full outline-none"
 							style={{
@@ -391,7 +426,7 @@ export function DataTable<TData, TValue>({
 						{globalFilter && (
 							<button
 								type="button"
-								onClick={() => setGlobalFilter("")}
+								onClick={() => { setGlobalFilter(""); onServerSearch?.(""); }}
 								className="absolute right-2.5 top-1/2 -translate-y-1/2"
 								style={{ color: "var(--color-text-muted)" }}
 							>
@@ -683,14 +718,23 @@ export function DataTable<TData, TValue>({
 					}}
 				>
 					<span>
-						Showing {table.getRowModel().rows.length} of {data.length} results
+						{serverPagination
+							? `Showing ${(serverPagination.page - 1) * serverPagination.pageSize + 1}–${Math.min(serverPagination.page * serverPagination.pageSize, serverPagination.totalCount)} of ${serverPagination.totalCount} results`
+							: `Showing ${table.getRowModel().rows.length} of ${data.length} results`}
 						{selectedCount > 0 && ` (${selectedCount} selected)`}
 					</span>
 					<div className="flex items-center gap-2">
 						<span>Rows per page</span>
 						<select
-							value={pagination.pageSize}
-							onChange={(e) => setPagination((p) => ({ ...p, pageSize: Number(e.target.value), pageIndex: 0 }))}
+							value={serverPagination ? serverPagination.pageSize : pagination.pageSize}
+							onChange={(e) => {
+								const newSize = Number(e.target.value);
+								if (serverPagination) {
+									serverPagination.onPageSizeChange(newSize);
+								} else {
+									setPagination((p) => ({ ...p, pageSize: newSize, pageIndex: 0 }));
+								}
+							}}
 							className="px-1.5 py-0.5 rounded-md text-xs outline-none"
 							style={{
 								background: "var(--color-surface-hover)",
@@ -703,13 +747,24 @@ export function DataTable<TData, TValue>({
 							))}
 						</select>
 						<span>
-							Page {pagination.pageIndex + 1} of {table.getPageCount()}
+							Page {serverPagination ? serverPagination.page : pagination.pageIndex + 1} of {table.getPageCount()}
 						</span>
 						<div className="flex gap-0.5">
-							<PaginationButton onClick={() => setPagination((p) => ({ ...p, pageIndex: 0 }))} disabled={!table.getCanPreviousPage()} label="&laquo;" />
-							<PaginationButton onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()} label="&lsaquo;" />
-							<PaginationButton onClick={() => table.nextPage()} disabled={!table.getCanNextPage()} label="&rsaquo;" />
-							<PaginationButton onClick={() => setPagination((p) => ({ ...p, pageIndex: table.getPageCount() - 1 }))} disabled={!table.getCanNextPage()} label="&raquo;" />
+							{serverPagination ? (
+								<>
+									<PaginationButton onClick={() => serverPagination.onPageChange(1)} disabled={serverPagination.page <= 1} label="&laquo;" />
+									<PaginationButton onClick={() => serverPagination.onPageChange(serverPagination.page - 1)} disabled={serverPagination.page <= 1} label="&lsaquo;" />
+									<PaginationButton onClick={() => serverPagination.onPageChange(serverPagination.page + 1)} disabled={serverPagination.page >= Math.ceil(serverPagination.totalCount / serverPagination.pageSize)} label="&rsaquo;" />
+									<PaginationButton onClick={() => serverPagination.onPageChange(Math.ceil(serverPagination.totalCount / serverPagination.pageSize))} disabled={serverPagination.page >= Math.ceil(serverPagination.totalCount / serverPagination.pageSize)} label="&raquo;" />
+								</>
+							) : (
+								<>
+									<PaginationButton onClick={() => setPagination((p) => ({ ...p, pageIndex: 0 }))} disabled={!table.getCanPreviousPage()} label="&laquo;" />
+									<PaginationButton onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()} label="&lsaquo;" />
+									<PaginationButton onClick={() => table.nextPage()} disabled={!table.getCanNextPage()} label="&rsaquo;" />
+									<PaginationButton onClick={() => setPagination((p) => ({ ...p, pageIndex: table.getPageCount() - 1 }))} disabled={!table.getCanNextPage()} label="&raquo;" />
+								</>
+							)}
 						</div>
 					</div>
 				</div>

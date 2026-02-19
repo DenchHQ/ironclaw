@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 type WebSession = {
 	id: string;
@@ -10,6 +10,15 @@ type WebSession = {
 	messageCount: number;
 };
 
+export type SidebarSubagentInfo = {
+	childSessionKey: string;
+	runId: string;
+	task: string;
+	label?: string;
+	parentSessionId: string;
+	status?: "running" | "completed" | "error";
+};
+
 type ChatSessionsSidebarProps = {
 	sessions: WebSession[];
 	activeSessionId: string | null;
@@ -17,8 +26,14 @@ type ChatSessionsSidebarProps = {
 	activeSessionTitle?: string;
 	/** Session IDs with an actively running agent stream. */
 	streamingSessionIds?: Set<string>;
+	/** Subagents spawned by chat sessions. */
+	subagents?: SidebarSubagentInfo[];
+	/** Currently selected subagent session key (if viewing a subagent). */
+	activeSubagentKey?: string | null;
 	onSelectSession: (sessionId: string) => void;
 	onNewSession: () => void;
+	/** Called when a subagent is selected in the sidebar. */
+	onSelectSubagent?: (sessionKey: string) => void;
 	/** When true, renders as a mobile overlay drawer instead of a static sidebar. */
 	mobile?: boolean;
 	/** Close the mobile drawer. */
@@ -60,6 +75,25 @@ function PlusIcon() {
 	);
 }
 
+function SubagentIcon() {
+	return (
+		<svg
+			width="11"
+			height="11"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<path d="M16 3h5v5" />
+			<path d="m21 3-7 7" />
+			<path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" />
+		</svg>
+	);
+}
+
 function ChatBubbleIcon() {
 	return (
 		<svg
@@ -82,8 +116,11 @@ export function ChatSessionsSidebar({
 	activeSessionId,
 	activeSessionTitle: _activeSessionTitle,
 	streamingSessionIds,
+	subagents,
+	activeSubagentKey,
 	onSelectSession,
 	onNewSession,
+	onSelectSubagent,
 	mobile,
 	onClose,
 }: ChatSessionsSidebarProps) {
@@ -96,6 +133,29 @@ export function ChatSessionsSidebar({
 		},
 		[onSelectSession, onClose],
 	);
+
+	const handleSelectSubagentItem = useCallback(
+		(sessionKey: string) => {
+			onSelectSubagent?.(sessionKey);
+			onClose?.();
+		},
+		[onSelectSubagent, onClose],
+	);
+
+	// Index subagents by parent session ID
+	const subagentsByParent = useMemo(() => {
+		const map = new Map<string, SidebarSubagentInfo[]>();
+		if (!subagents) {return map;}
+		for (const sa of subagents) {
+			let list = map.get(sa.parentSessionId);
+			if (!list) {
+				list = [];
+				map.set(sa.parentSessionId, list);
+			}
+			list.push(sa);
+		}
+		return map;
+	}, [subagents]);
 
 	// Group sessions: today, yesterday, this week, this month, older
 	const grouped = groupSessions(sessions);
@@ -169,12 +229,13 @@ export function ChatSessionsSidebar({
 									{group.label}
 								</div>
 							{group.sessions.map((session) => {
-								const isActive = session.id === activeSessionId;
+								const isActive = session.id === activeSessionId && !activeSubagentKey;
 								const isHovered = session.id === hoveredId;
 								const isStreamingSession = streamingSessionIds?.has(session.id) ?? false;
+								const sessionSubagents = subagentsByParent.get(session.id);
 								return (
+									<div key={session.id}>
 									<button
-										key={session.id}
 										type="button"
 										onClick={() => handleSelect(session.id)}
 										onMouseEnter={() => setHoveredId(session.id)}
@@ -232,6 +293,52 @@ export function ChatSessionsSidebar({
 											)}
 										</div>
 									</button>
+									{/* Subagent sub-items */}
+									{sessionSubagents && sessionSubagents.length > 0 && (
+										<div className="ml-4 border-l" style={{ borderColor: "var(--color-border)" }}>
+											{sessionSubagents.map((sa) => {
+												const isSubActive = activeSubagentKey === sa.childSessionKey;
+												const isSubRunning = sa.status === "running";
+												const subLabel = sa.label || sa.task;
+												const truncated = subLabel.length > 40 ? subLabel.slice(0, 40) + "..." : subLabel;
+												return (
+													<button
+														key={sa.childSessionKey}
+														type="button"
+														onClick={() => handleSelectSubagentItem(sa.childSessionKey)}
+														className="w-full text-left pl-3 pr-2 py-1.5 rounded-r-lg transition-colors cursor-pointer"
+														style={{
+															background: isSubActive
+																? "var(--color-accent-light)"
+																: "transparent",
+														}}
+													>
+														<div className="flex items-center gap-1.5">
+															{isSubRunning && (
+																<span
+																	className="inline-block w-1 h-1 rounded-full flex-shrink-0 animate-pulse"
+																	style={{ background: "var(--color-accent)" }}
+																	title="Subagent running"
+																/>
+															)}
+															<SubagentIcon />
+															<span
+																className="text-[11px] truncate"
+																style={{
+																	color: isSubActive
+																		? "var(--color-accent)"
+																		: "var(--color-text-muted)",
+																}}
+															>
+																{truncated}
+															</span>
+														</div>
+													</button>
+												);
+											})}
+										</div>
+									)}
+									</div>
 									);
 								})}
 							</div>

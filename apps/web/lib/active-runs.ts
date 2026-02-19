@@ -17,7 +17,7 @@ import {
 	existsSync,
 	mkdirSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { resolveWebChatDir } from "./workspace";
 import {
 	type AgentEvent,
 	spawnAgentProcess,
@@ -28,6 +28,12 @@ import {
 	parseErrorBody,
 	parseErrorFromStderr,
 } from "./agent-runner";
+import {
+	routeRawEvent as routeSubagentEvent,
+	ensureRegisteredFromDisk,
+	hasActiveSubagent as hasSubagentRun,
+	activateGatewayFallback,
+} from "./subagent-runs";
 
 // ── Types ──
 
@@ -76,8 +82,9 @@ export type ActiveRun = {
 
 const PERSIST_INTERVAL_MS = 2_000;
 const CLEANUP_GRACE_MS = 30_000;
-const WEB_CHAT_DIR = join(homedir(), ".openclaw", "web-chat");
-const INDEX_FILE = join(WEB_CHAT_DIR, "index.json");
+// Evaluated per-call so it tracks profile switches at runtime.
+function webChatDir(): string { return resolveWebChatDir(); }
+function indexFile(): string { return join(webChatDir(), "index.json"); }
 
 // ── Singleton registry ──
 // Store on globalThis so the Map survives Next.js HMR reloads in dev mode.
@@ -306,7 +313,7 @@ export function persistUserMessage(
 	msg: { id: string; content: string; parts?: unknown[] },
 ): void {
 	ensureDir();
-	const filePath = join(WEB_CHAT_DIR, `${sessionId}.jsonl`);
+	const filePath = join(webChatDir(), `${sessionId}.jsonl`);
 	if (!existsSync(filePath)) {writeFileSync(filePath, "");}
 
 	const line = JSON.stringify({
@@ -337,8 +344,9 @@ export function persistUserMessage(
 // ── Internals ──
 
 function ensureDir() {
-	if (!existsSync(WEB_CHAT_DIR)) {
-		mkdirSync(WEB_CHAT_DIR, { recursive: true });
+	const dir = webChatDir();
+	if (!existsSync(dir)) {
+		mkdirSync(dir, { recursive: true });
 	}
 }
 
@@ -347,9 +355,10 @@ function updateIndex(
 	opts: { incrementCount?: number; title?: string },
 ) {
 	try {
-		if (!existsSync(INDEX_FILE)) {return;}
+		const idxPath = indexFile();
+		if (!existsSync(idxPath)) {return;}
 		const index = JSON.parse(
-			readFileSync(INDEX_FILE, "utf-8"),
+			readFileSync(idxPath, "utf-8"),
 		) as Array<Record<string, unknown>>;
 		const session = index.find((s) => s.id === sessionId);
 		if (!session) {return;}
@@ -359,7 +368,7 @@ function updateIndex(
 				((session.messageCount as number) || 0) + opts.incrementCount;
 		}
 		if (opts.title) {session.title = opts.title;}
-		writeFileSync(INDEX_FILE, JSON.stringify(index, null, 2));
+		writeFileSync(idxPath, JSON.stringify(index, null, 2));
 	} catch {
 		/* best-effort */
 	}
@@ -466,6 +475,9 @@ function wireChildProcess(run: ActiveRun): void {
 	// ── Parse stdout JSON lines ──
 
 	const rl = createInterface({ input: child.stdout! });
+	const parentSessionKey = `agent:main:web:${run.sessionId}`;
+	// Track which subagent session keys we've already attempted to register
+	const seenSubagentKeys = new Set<string>();
 
 	// Prevent unhandled 'error' events on the readline interface.
 	// When the child process fails to start (e.g. ENOENT — missing script)
@@ -484,6 +496,29 @@ function wireChildProcess(run: ActiveRun): void {
 		try {
 			ev = JSON.parse(line) as AgentEvent;
 		} catch {
+			return;
+		}
+
+		// ── Route non-parent events to SubagentRunManager ──
+		// The CLI child process receives ALL gateway broadcasts, including
+		// events from subagent runs.  Filter them out of the parent chat
+		// and route to the SubagentRunManager for separate streaming.
+		if (ev.sessionKey && ev.sessionKey !== parentSessionKey) {
+			const childKey = ev.sessionKey;
+			// Try to register the subagent if not yet known. Events
+			// arriving before runs.json is written get buffered inside
+			// routeRawEvent and replayed upon successful registration.
+			if (!hasSubagentRun(childKey) && !seenSubagentKeys.has(childKey)) {
+				if (ensureRegisteredFromDisk(childKey, run.sessionId)) {
+					seenSubagentKeys.add(childKey);
+				}
+				// Don't add to seenSubagentKeys on failure — retry on the next event
+			}
+			routeSubagentEvent(childKey, {
+				event: ev.event,
+				stream: ev.stream,
+				data: ev.data,
+			});
 			return;
 		}
 
@@ -748,6 +783,12 @@ function wireChildProcess(run: ActiveRun): void {
 		run.status = code === 0 || code === null ? "completed" : "error";
 		run.exitCode = code;
 
+		// The parent's NDJSON stream has ended. Any subagents that are
+		// still running lose their event source (sessions_spawn is
+		// fire-and-forget). Switch to gateway WebSocket subscriptions
+		// so they keep streaming.
+		activateGatewayFallback();
+
 		// Final persistence flush (removes _streaming flag).
 		flushPersistence(run);
 
@@ -860,7 +901,7 @@ function upsertMessage(
 	message: Record<string, unknown>,
 ) {
 	ensureDir();
-	const fp = join(WEB_CHAT_DIR, `${sessionId}.jsonl`);
+	const fp = join(webChatDir(), `${sessionId}.jsonl`);
 	if (!existsSync(fp)) {writeFileSync(fp, "");}
 
 	const msgId = message.id as string;

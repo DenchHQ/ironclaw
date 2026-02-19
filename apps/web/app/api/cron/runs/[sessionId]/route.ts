@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveOpenClawStateDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +18,7 @@ type ParsedMessage = {
 
 /** Search agent session directories for a session file by ID. */
 function findSessionFile(sessionId: string): string | null {
-  const agentsDir = join(homedir(), ".openclaw", "agents");
+  const agentsDir = join(resolveOpenClawStateDir(), "agents");
   if (!existsSync(agentsDir)) {return null;}
 
   try {

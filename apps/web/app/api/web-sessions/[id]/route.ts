@@ -1,10 +1,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveWebChatDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
-
-const WEB_CHAT_DIR = join(homedir(), ".openclaw", "web-chat");
 
 export type ChatLine = {
   id: string;
@@ -24,7 +22,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const filePath = join(WEB_CHAT_DIR, `${id}.jsonl`);
+  const filePath = join(resolveWebChatDir(), `${id}.jsonl`);
 
   if (!existsSync(filePath)) {
     return Response.json({ error: "Session not found" }, { status: 404 });

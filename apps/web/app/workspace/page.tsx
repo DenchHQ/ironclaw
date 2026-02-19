@@ -16,7 +16,8 @@ import { Breadcrumbs } from "../components/workspace/breadcrumbs";
 import { ChatSessionsSidebar } from "../components/workspace/chat-sessions-sidebar";
 import { EmptyState } from "../components/workspace/empty-state";
 import { ReportViewer } from "../components/charts/report-viewer";
-import { ChatPanel, type ChatPanelHandle } from "../components/chat-panel";
+import { ChatPanel, type ChatPanelHandle, type SubagentSpawnInfo } from "../components/chat-panel";
+import { SubagentPanel } from "../components/subagent-panel";
 import { EntryDetailModal } from "../components/workspace/entry-detail-modal";
 import { useSearchIndex } from "@/lib/search-index";
 import { parseWorkspaceLink, isWorkspaceLink } from "@/lib/workspace-links";
@@ -26,7 +27,7 @@ import { CronJobDetail } from "../components/cron/cron-job-detail";
 import type { CronJob, CronJobsResponse } from "../types/cron";
 import { useIsMobile } from "../hooks/use-mobile";
 import { ObjectFilterBar } from "../components/workspace/object-filter-bar";
-import { type FilterGroup, type SavedView, emptyFilterGroup, matchesFilter } from "@/lib/object-filters";
+import { type FilterGroup, type SortRule, type SavedView, emptyFilterGroup, serializeFilters } from "@/lib/object-filters";
 
 // --- Types ---
 
@@ -77,6 +78,9 @@ type ObjectData = {
   effectiveDisplayField?: string;
   savedViews?: import("@/lib/object-filters").SavedView[];
   activeView?: string;
+  totalCount?: number;
+  page?: number;
+  pageSize?: number;
 };
 
 type FileData = {
@@ -229,8 +233,12 @@ function WorkspacePageInner() {
   // Live-reactive tree via SSE watcher (with browse-mode support)
   const {
     tree, loading: treeLoading, exists: workspaceExists, refresh: refreshTree,
+    reconnect: reconnectWorkspace,
     browseDir, setBrowseDir, parentDir: browseParentDir, workspaceRoot, openclawDir,
+    activeProfile,
   } = useWorkspaceWatcher();
+
+  // handleProfileSwitch is defined below fetchSessions/fetchCronJobs (avoids TDZ)
 
   // Search index for @ mention fuzzy search (files + entries)
   const { search: searchIndex } = useSearchIndex();
@@ -245,6 +253,46 @@ function WorkspacePageInner() {
   const [sessions, setSessions] = useState<WebSession[]>([]);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [streamingSessionIds, setStreamingSessionIds] = useState<Set<string>>(new Set());
+
+  // Subagent tracking
+  const [subagents, setSubagents] = useState<SubagentSpawnInfo[]>([]);
+  const [activeSubagentKey, setActiveSubagentKey] = useState<string | null>(null);
+
+  const handleSubagentSpawned = useCallback((info: SubagentSpawnInfo) => {
+    setSubagents((prev) => {
+      const idx = prev.findIndex((sa) => sa.childSessionKey === info.childSessionKey);
+      if (idx >= 0) {
+        // Update status if changed
+        if (prev[idx].status === info.status) {return prev;}
+        const updated = [...prev];
+        updated[idx] = { ...prev[idx], ...info };
+        return updated;
+      }
+      return [...prev, info];
+    });
+  }, []);
+
+  const handleSelectSubagent = useCallback((sessionKey: string) => {
+    setActiveSubagentKey(sessionKey);
+  }, []);
+
+  const handleBackFromSubagent = useCallback(() => {
+    setActiveSubagentKey(null);
+  }, []);
+
+  // Navigate to a subagent panel when its card is clicked in the chat
+  const handleSubagentClickFromChat = useCallback((task: string) => {
+    const match = subagents.find((sa) => sa.task === task);
+    if (match) {
+      setActiveSubagentKey(match.childSessionKey);
+    }
+  }, [subagents]);
+
+  // Find the active subagent's info for the panel
+  const activeSubagent = useMemo(() => {
+    if (!activeSubagentKey) {return null;}
+    return subagents.find((sa) => sa.childSessionKey === activeSubagentKey) ?? null;
+  }, [activeSubagentKey, subagents]);
 
   // Cron jobs state
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
@@ -357,6 +405,18 @@ function WorkspacePageInner() {
     return () => clearInterval(id);
   }, [fetchCronJobs]);
 
+  // After profile switch or workspace creation, reconnect SSE + refresh all data
+  const handleProfileSwitch = useCallback(() => {
+    reconnectWorkspace();
+    void fetchSessions();
+    void fetchCronJobs();
+    setActivePath(null);
+    setContent({ kind: "none" });
+    setActiveSessionId(null);
+    setSubagents([]);
+    setActiveSubagentKey(null);
+  }, [reconnectWorkspace, fetchSessions, fetchCronJobs]);
+
   // Load content when path changes
   const loadContent = useCallback(
     async (node: TreeNode) => {
@@ -446,8 +506,8 @@ function WorkspacePageInner() {
             setContent({ kind: "cron-dashboard" });
             return;
           }
-          // Clicking the web-chat directory → switch to workspace mode & open chats
-          if (node.path === openclawDir + "/web-chat") {
+          // Clicking any web-chat directory → switch to workspace mode & open chats
+          if (openclawDir && node.path.startsWith(openclawDir + "/web-chat")) {
             setBrowseDir(null);
             setActivePath(null);
             setContent({ kind: "none" });
@@ -878,6 +938,8 @@ function WorkspacePageInner() {
             workspaceRoot={workspaceRoot}
             onGoToChat={() => { handleGoToChat(); setSidebarOpen(false); }}
             onExternalDrop={handleSidebarExternalDrop}
+            activeProfile={activeProfile}
+            onProfileSwitch={handleProfileSwitch}
             mobile
             onClose={() => setSidebarOpen(false)}
           />
@@ -898,6 +960,8 @@ function WorkspacePageInner() {
           workspaceRoot={workspaceRoot}
           onGoToChat={handleGoToChat}
           onExternalDrop={handleSidebarExternalDrop}
+          activeProfile={activeProfile}
+          onProfileSwitch={handleProfileSwitch}
         />
       )}
 
@@ -1012,16 +1076,28 @@ function WorkspacePageInner() {
             /* Main chat view (default when no file is selected) */
             <>
               <div className="flex-1 flex flex-col min-w-0">
+                {activeSubagent ? (
+                  <SubagentPanel
+                    sessionKey={activeSubagent.childSessionKey}
+                    task={activeSubagent.task}
+                    label={activeSubagent.label}
+                    onBack={handleBackFromSubagent}
+                  />
+                ) : (
                 <ChatPanel
                   ref={chatRef}
                   sessionTitle={activeSessionTitle}
                   initialSessionId={activeSessionId ?? undefined}
                   onActiveSessionChange={(id) => {
                     setActiveSessionId(id);
+                    setActiveSubagentKey(null);
                   }}
                   onSessionsChange={refreshSessions}
+                  onSubagentSpawned={handleSubagentSpawned}
+                  onSubagentClick={handleSubagentClickFromChat}
                   compact={isMobile}
                 />
+                )}
               </div>
               {/* Chat sessions sidebar — static on desktop, drawer overlay on mobile */}
               {isMobile ? (
@@ -1031,16 +1107,21 @@ function WorkspacePageInner() {
                     activeSessionId={activeSessionId}
                     activeSessionTitle={activeSessionTitle}
                     streamingSessionIds={streamingSessionIds}
+                    subagents={subagents}
+                    activeSubagentKey={activeSubagentKey}
                     onSelectSession={(sessionId) => {
                       setActiveSessionId(sessionId);
+                      setActiveSubagentKey(null);
                       void chatRef.current?.loadSession(sessionId);
                     }}
                     onNewSession={() => {
                       setActiveSessionId(null);
+                      setActiveSubagentKey(null);
                       void chatRef.current?.newSession();
                       router.replace("/workspace", { scroll: false });
                       setChatSessionsOpen(false);
                     }}
+                    onSelectSubagent={handleSelectSubagent}
                     mobile
                     onClose={() => setChatSessionsOpen(false)}
                   />
@@ -1051,15 +1132,20 @@ function WorkspacePageInner() {
                   activeSessionId={activeSessionId}
                   activeSessionTitle={activeSessionTitle}
                   streamingSessionIds={streamingSessionIds}
+                  subagents={subagents}
+                  activeSubagentKey={activeSubagentKey}
                   onSelectSession={(sessionId) => {
                     setActiveSessionId(sessionId);
+                    setActiveSubagentKey(null);
                     void chatRef.current?.loadSession(sessionId);
                   }}
                   onNewSession={() => {
                     setActiveSessionId(null);
+                    setActiveSubagentKey(null);
                     void chatRef.current?.newSession();
                     router.replace("/workspace", { scroll: false });
                   }}
+                  onSelectSubagent={handleSelectSubagent}
                 />
               )}
             </>
@@ -1084,6 +1170,7 @@ function WorkspacePageInner() {
                   searchFn={searchIndex}
                   onSelectCronJob={handleSelectCronJob}
                   onBackToCronDashboard={handleBackToCronDashboard}
+                  onWorkspaceCreated={handleProfileSwitch}
                 />
               </div>
 
@@ -1148,6 +1235,7 @@ function ContentRenderer({
   searchFn,
   onSelectCronJob,
   onBackToCronDashboard,
+  onWorkspaceCreated,
 }: {
   content: ContentState;
   workspaceExists: boolean;
@@ -1167,6 +1255,8 @@ function ContentRenderer({
   searchFn: (query: string, limit?: number) => import("@/lib/search-index").SearchIndexItem[];
   onSelectCronJob: (jobId: string) => void;
   onBackToCronDashboard: () => void;
+  /** Called after a new workspace is created from the empty state. */
+  onWorkspaceCreated?: () => void;
 }) {
   switch (content.kind) {
     case "loading":
@@ -1298,7 +1388,7 @@ function ContentRenderer({
     case "none":
     default:
       if (tree.length === 0) {
-        return <EmptyState workspaceExists={workspaceExists} />;
+        return <EmptyState workspaceExists={workspaceExists} onWorkspaceCreated={onWorkspaceCreated} />;
       }
       return <WelcomeView tree={tree} onNodeSelect={onNodeSelect} />;
   }
@@ -1326,6 +1416,15 @@ function ObjectView({
   const [savedViews, setSavedViews] = useState<SavedView[]>(data.savedViews ?? []);
   const [activeViewName, setActiveViewName] = useState<string | undefined>(data.activeView);
 
+  // --- Server-side pagination state ---
+  const [serverPage, setServerPage] = useState(data.page ?? 1);
+  const [serverPageSize, setServerPageSize] = useState(data.pageSize ?? 100);
+  const [totalCount, setTotalCount] = useState(data.totalCount ?? data.entries.length);
+  const [entries, setEntries] = useState(data.entries);
+  const [serverSearch, setServerSearch] = useState("");
+  const [sortRules, setSortRules] = useState<SortRule[] | undefined>(undefined);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Column visibility: maps field IDs to boolean (false = hidden)
   const [viewColumns, setViewColumns] = useState<string[] | undefined>(undefined);
 
@@ -1339,6 +1438,54 @@ function ObjectView({
     return vis;
   }, [viewColumns, data.fields]);
 
+  // Fetch entries from server with current pagination/filter/sort/search state
+  const fetchEntries = useCallback(async (opts?: {
+    page?: number;
+    pageSize?: number;
+    filters?: FilterGroup;
+    sort?: SortRule[];
+    search?: string;
+  }) => {
+    const p = opts?.page ?? serverPage;
+    const ps = opts?.pageSize ?? serverPageSize;
+    const f = opts?.filters ?? filters;
+    const s = opts?.sort ?? sortRules;
+    const q = opts?.search ?? serverSearch;
+
+    const params = new URLSearchParams();
+    params.set("page", String(p));
+    params.set("pageSize", String(ps));
+    if (f && f.rules.length > 0) {
+      params.set("filters", serializeFilters(f));
+    }
+    if (s && s.length > 0) {
+      params.set("sort", JSON.stringify(s));
+    }
+    if (q) {
+      params.set("search", q);
+    }
+
+    try {
+      const res = await fetch(
+        `/api/workspace/objects/${encodeURIComponent(data.object.name)}?${params.toString()}`
+      );
+      if (!res.ok) {return;}
+      const result: ObjectData = await res.json();
+      setEntries(result.entries);
+      setTotalCount(result.totalCount ?? result.entries.length);
+      setServerPage(result.page ?? p);
+      setServerPageSize(result.pageSize ?? ps);
+    } catch {
+      // ignore
+    }
+  }, [serverPage, serverPageSize, filters, sortRules, serverSearch, data.object.name]);
+
+  // Sync initial data from props (when parent refreshes via SSE)
+  useEffect(() => {
+    setEntries(data.entries);
+    setTotalCount(data.totalCount ?? data.entries.length);
+  }, [data.entries, data.totalCount]);
+
   // Sync saved views when data changes (e.g. SSE refresh from AI editing .object.yaml)
   useEffect(() => {
     setSavedViews(data.savedViews ?? []);
@@ -1348,17 +1495,51 @@ function ObjectView({
         setFilters(view.filters ?? emptyFilterGroup());
         setViewColumns(view.columns);
         setActiveViewName(view.name);
+        // Re-fetch with new filters from the view
+        void fetchEntries({ page: 1, filters: view.filters ?? emptyFilterGroup() });
       }
     }
-  // Only re-run when the API data itself changes (not our local state)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.savedViews, data.activeView]);
 
-  // Apply client-side filtering
-  const filteredEntries = useMemo(
-    () => matchesFilter(data.entries, filters),
-    [data.entries, filters],
-  );
+  // When filters change, reset to page 1 and re-fetch
+  const handleFiltersChange = useCallback((newFilters: FilterGroup) => {
+    setFilters(newFilters);
+    setServerPage(1);
+    void fetchEntries({ page: 1, filters: newFilters });
+  }, [fetchEntries]);
+
+  // Server-side search with debounce
+  const handleServerSearch = useCallback((query: string) => {
+    setServerSearch(query);
+    if (searchTimerRef.current) {clearTimeout(searchTimerRef.current);}
+    searchTimerRef.current = setTimeout(() => {
+      setServerPage(1);
+      void fetchEntries({ page: 1, search: query });
+    }, 300);
+  }, [fetchEntries]);
+
+  // Page change
+  const handlePageChange = useCallback((page: number) => {
+    setServerPage(page);
+    void fetchEntries({ page });
+  }, [fetchEntries]);
+
+  // Page size change
+  const handlePageSizeChange = useCallback((size: number) => {
+    setServerPageSize(size);
+    setServerPage(1);
+    void fetchEntries({ page: 1, pageSize: size });
+  }, [fetchEntries]);
+
+  // Override onRefreshObject to re-fetch with current pagination state
+  const handleRefresh = useCallback(() => {
+    void fetchEntries();
+    onRefreshObject();
+  }, [fetchEntries, onRefreshObject]);
+
+  // Use entries from server (already filtered server-side)
+  const filteredEntries = entries;
 
   // Save view to .object.yaml via API
   const handleSaveView = useCallback(async (name: string) => {
@@ -1381,10 +1562,13 @@ function ObjectView({
   }, [filters, savedViews, data.object.name]);
 
   const handleLoadView = useCallback((view: SavedView) => {
-    setFilters(view.filters ?? emptyFilterGroup());
+    const newFilters = view.filters ?? emptyFilterGroup();
+    setFilters(newFilters);
     setViewColumns(view.columns);
     setActiveViewName(view.name);
-  }, []);
+    setServerPage(1);
+    void fetchEntries({ page: 1, filters: newFilters });
+  }, [fetchEntries]);
 
   const handleDeleteView = useCallback(async (name: string) => {
     const updated = savedViews.filter((v) => v.name !== name);
@@ -1491,7 +1675,7 @@ function ObjectView({
               border: "1px solid var(--color-border)",
             }}
           >
-            {filteredEntries.length}{filters.rules.length > 0 ? `/${data.entries.length}` : ""} entries
+            {totalCount} entries
           </span>
           <span
             className="text-xs px-2 py-1 rounded-full"
@@ -1583,7 +1767,7 @@ function ObjectView({
         <ObjectFilterBar
           fields={data.fields}
           filters={filters}
-          onFiltersChange={setFilters}
+          onFiltersChange={handleFiltersChange}
           savedViews={savedViews}
           activeViewName={activeViewName}
           onSaveView={handleSaveView}
@@ -1604,7 +1788,7 @@ function ObjectView({
           members={members}
           relationLabels={data.relationLabels}
           onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
-          onRefresh={onRefreshObject}
+          onRefresh={handleRefresh}
         />
       ) : (
         <ObjectTable
@@ -1616,8 +1800,16 @@ function ObjectView({
           reverseRelations={data.reverseRelations}
           onNavigateToObject={onNavigateToObject}
           onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
-          onRefresh={onRefreshObject}
+          onRefresh={handleRefresh}
           columnVisibility={columnVisibility}
+          serverPagination={{
+            totalCount,
+            page: serverPage,
+            pageSize: serverPageSize,
+            onPageChange: handlePageChange,
+            onPageSizeChange: handlePageSizeChange,
+          }}
+          onServerSearch={handleServerSearch}
         />
       )}
     </div>

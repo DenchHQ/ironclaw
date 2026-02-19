@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveOpenClawStateDir, resolveWorkspaceRoot } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,8 @@ type MemoryFile = {
 };
 
 export async function GET() {
-  const workspaceDir = join(homedir(), ".openclaw", "workspace");
+  const stateDir = resolveOpenClawStateDir();
+  const workspaceDir = resolveWorkspaceRoot() ?? join(stateDir, "workspace");
   let mainMemory: string | null = null;
   const dailyLogs: MemoryFile[] = [];
 

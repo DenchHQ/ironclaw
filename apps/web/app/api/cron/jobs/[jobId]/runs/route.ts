@@ -1,10 +1,10 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveOpenClawStateDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
-const CRON_DIR = join(homedir(), ".openclaw", "cron");
+const CRON_DIR = join(resolveOpenClawStateDir(), "cron");
 
 type CronRunLogEntry = {
   ts: number;

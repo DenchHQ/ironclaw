@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getEffectiveProfile, resolveWorkspaceRoot } from "./workspace";
 
 export type AgentEvent = {
 	event: string;
@@ -184,9 +185,15 @@ export function spawnAgentProcess(
 		args.push("--session-key", sessionKey, "--lane", "web", "--channel", "webchat");
 	}
 
+	const profile = getEffectiveProfile();
+	const workspace = resolveWorkspaceRoot();
 	return spawn("node", args, {
 		cwd: root,
-		env: { ...process.env },
+		env: {
+			...process.env,
+			...(profile ? { OPENCLAW_PROFILE: profile } : {}),
+			...(workspace ? { OPENCLAW_WORKSPACE: workspace } : {}),
+		},
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 }

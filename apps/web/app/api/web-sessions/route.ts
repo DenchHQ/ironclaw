@@ -1,12 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { resolveWebChatDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
-
-const WEB_CHAT_DIR = join(homedir(), ".openclaw", "web-chat");
-const INDEX_FILE = join(WEB_CHAT_DIR, "index.json");
 
 export type WebSessionMeta = {
   id: string;
@@ -19,24 +16,27 @@ export type WebSessionMeta = {
 };
 
 function ensureDir() {
-  if (!existsSync(WEB_CHAT_DIR)) {
-    mkdirSync(WEB_CHAT_DIR, { recursive: true });
+  const dir = resolveWebChatDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
+  return dir;
 }
 
 function readIndex(): WebSessionMeta[] {
-  ensureDir();
-  if (!existsSync(INDEX_FILE)) {return [];}
+  const dir = ensureDir();
+  const indexFile = join(dir, "index.json");
+  if (!existsSync(indexFile)) {return [];}
   try {
-    return JSON.parse(readFileSync(INDEX_FILE, "utf-8"));
+    return JSON.parse(readFileSync(indexFile, "utf-8"));
   } catch {
     return [];
   }
 }
 
 function writeIndex(sessions: WebSessionMeta[]) {
-  ensureDir();
-  writeFileSync(INDEX_FILE, JSON.stringify(sessions, null, 2));
+  const dir = ensureDir();
+  writeFileSync(join(dir, "index.json"), JSON.stringify(sessions, null, 2));
 }
 
 /** GET /api/web-sessions — list web chat sessions.
@@ -72,8 +72,8 @@ export async function POST(req: Request) {
   writeIndex(sessions);
 
   // Create empty .jsonl file
-  ensureDir();
-  writeFileSync(join(WEB_CHAT_DIR, `${id}.jsonl`), "");
+  const dir = ensureDir();
+  writeFileSync(join(dir, `${id}.jsonl`), "");
 
   return Response.json({ session });
 }

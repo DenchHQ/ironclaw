@@ -37,7 +37,8 @@ type MessageSegment =
 	| { type: "text"; text: string }
 	| { type: "chain"; parts: ChainPart[] }
 	| { type: "report-artifact"; config: ReportConfig }
-	| { type: "diff-artifact"; diff: string };
+	| { type: "diff-artifact"; diff: string }
+	| { type: "subagent-card"; task: string; label?: string; status: "running" | "done" | "error" };
 
 /** Map AI SDK tool state string to a simplified status */
 function toolStatus(state: string): "running" | "done" | "error" {
@@ -115,15 +116,22 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 					isStreaming: rp.state === "streaming",
 				});
 			}
-		} else if (part.type === "dynamic-tool") {
-			const tp = part as {
-				type: "dynamic-tool";
-				toolName: string;
-				toolCallId: string;
-				state: string;
-				input?: unknown;
-				output?: unknown;
-			};
+	} else if (part.type === "dynamic-tool") {
+		const tp = part as {
+			type: "dynamic-tool";
+			toolName: string;
+			toolCallId: string;
+			state: string;
+			input?: unknown;
+			output?: unknown;
+		};
+		if (tp.toolName === "sessions_spawn") {
+			flush(true);
+			const args = asRecord(tp.input);
+			const task = typeof args?.task === "string" ? args.task : "Subagent task";
+			const label = typeof args?.label === "string" ? args.label : undefined;
+			segments.push({ type: "subagent-card", task, label, status: toolStatus(tp.state) });
+		} else {
 			chain.push({
 				kind: "tool",
 				toolName: tp.toolName,
@@ -132,22 +140,34 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 				args: asRecord(tp.input),
 				output: asRecord(tp.output),
 			});
-		} else if (part.type.startsWith("tool-")) {
-			// Handles both live SSE parts (input/output fields) and
-			// persisted JSONL parts (args/result fields from tool-invocation)
-			const tp = part as {
-				type: string;
-				toolCallId: string;
-				toolName?: string;
-				state?: string;
-				title?: string;
-				input?: unknown;
-				output?: unknown;
-				// Persisted JSONL format uses args/result instead
-				args?: unknown;
-				result?: unknown;
-				errorText?: string;
-			};
+		}
+	} else if (part.type.startsWith("tool-")) {
+		// Handles both live SSE parts (input/output fields) and
+		// persisted JSONL parts (args/result fields from tool-invocation)
+		const tp = part as {
+			type: string;
+			toolCallId: string;
+			toolName?: string;
+			state?: string;
+			title?: string;
+			input?: unknown;
+			output?: unknown;
+			// Persisted JSONL format uses args/result instead
+			args?: unknown;
+			result?: unknown;
+			errorText?: string;
+		};
+		const resolvedToolName = tp.title ?? tp.toolName ?? part.type.replace("tool-", "");
+		if (resolvedToolName === "sessions_spawn") {
+			flush(true);
+			const args = asRecord(tp.input) ?? asRecord(tp.args);
+			const task = typeof args?.task === "string" ? args.task : "Subagent task";
+			const label = typeof args?.label === "string" ? args.label : undefined;
+			const resolvedState =
+				tp.state ??
+				(tp.errorText ? "error" : ("result" in tp || "output" in tp) ? "output-available" : "input-available");
+			segments.push({ type: "subagent-card", task, label, status: toolStatus(resolvedState) });
+		} else {
 			// Persisted tool-invocation parts have no state field but
 			// include result/output/errorText to indicate completion.
 			const resolvedState =
@@ -155,16 +175,14 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 				(tp.errorText ? "error" : ("result" in tp || "output" in tp) ? "output-available" : "input-available");
 			chain.push({
 				kind: "tool",
-				toolName:
-					tp.title ??
-					tp.toolName ??
-					part.type.replace("tool-", ""),
+				toolName: resolvedToolName,
 				toolCallId: tp.toolCallId,
 				status: toolStatus(resolvedState),
 				args: asRecord(tp.input) ?? asRecord(tp.args),
 				output: asRecord(tp.output) ?? asRecord(tp.result),
 			});
 		}
+	}
 	}
 
 	flush();
@@ -633,7 +651,7 @@ const mdComponents: Components = {
 
 /* ─── Chat message ─── */
 
-export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: { message: UIMessage; isStreaming?: boolean }) {
+export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onSubagentClick }: { message: UIMessage; isStreaming?: boolean; onSubagentClick?: (task: string) => void }) {
 	const isUser = message.role === "user";
 	const segments = groupParts(message.parts);
 
@@ -798,31 +816,79 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: {
 					</motion.div>
 				);
 			}
-			if (segment.type === "diff-artifact") {
-				return (
-					<motion.div
-						key={`diff-${index}`}
-						initial={{ opacity: 0, y: 4 }}
-						animate={{ opacity: 1, y: 0 }}
-						transition={{ duration: 0.2, ease: "easeOut" }}
+		if (segment.type === "diff-artifact") {
+			return (
+				<motion.div
+					key={`diff-${index}`}
+					initial={{ opacity: 0, y: 4 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.2, ease: "easeOut" }}
+				>
+					<DiffCard diff={segment.diff} />
+				</motion.div>
+			);
+		}
+		if (segment.type === "subagent-card") {
+			const truncatedTask = segment.task.length > 80 ? segment.task.slice(0, 80) + "..." : segment.task;
+			const isRunning = segment.status === "running";
+			return (
+				<motion.div
+					key={`subagent-${index}`}
+					initial={{ opacity: 0, y: 4 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.2, ease: "easeOut" }}
+				>
+					<button
+						type="button"
+						onClick={() => onSubagentClick?.(segment.task)}
+						className="w-full text-left rounded-xl px-3.5 py-2.5 transition-colors cursor-pointer"
+						style={{
+							background: "var(--color-accent-light)",
+							border: "1px solid color-mix(in srgb, var(--color-accent) 20%, transparent)",
+						}}
 					>
-						<DiffCard diff={segment.diff} />
-					</motion.div>
-				);
-			}
-				return (
-					<motion.div
-						key={`chain-${index}`}
-						initial={{ opacity: 0, y: 4 }}
-						animate={{ opacity: 1, y: 0 }}
-						transition={{ duration: 0.2, ease: "easeOut" }}
-					>
-						<ChainOfThought
-							parts={segment.parts}
-							isStreaming={isStreaming}
-						/>
-					</motion.div>
-				);
+						<div className="flex items-center gap-2.5">
+							{isRunning ? (
+								<span
+									className="inline-block w-2 h-2 rounded-full animate-pulse flex-shrink-0"
+									style={{ background: "var(--color-accent)" }}
+								/>
+							) : (
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0" style={{ color: "var(--color-accent)" }}>
+									<path d="M16 3h5v5" /><path d="m21 3-7 7" /><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" />
+								</svg>
+							)}
+							<div className="min-w-0 flex-1">
+								<div className="flex items-center gap-2">
+									<span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--color-accent)" }}>
+										{isRunning ? "Running Subagent" : "Subagent"}
+									</span>
+								</div>
+								<p className="text-xs mt-0.5 leading-relaxed" style={{ color: "var(--color-text)" }}>
+									{segment.label || truncatedTask}
+								</p>
+							</div>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 opacity-40" style={{ color: "var(--color-text)" }}>
+								<path d="m9 18 6-6-6-6" />
+							</svg>
+						</div>
+					</button>
+				</motion.div>
+			);
+		}
+			return (
+				<motion.div
+					key={`chain-${index}`}
+					initial={{ opacity: 0, y: 4 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.2, ease: "easeOut" }}
+				>
+					<ChainOfThought
+						parts={segment.parts}
+						isStreaming={isStreaming}
+					/>
+				</motion.div>
+			);
 			})}
 			</AnimatePresence>
 		</div>

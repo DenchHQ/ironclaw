@@ -28,12 +28,17 @@ export function useWorkspaceWatcher() {
   const [parentDir, setParentDir] = useState<string | null>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [openclawDir, setOpenclawDir] = useState<string | null>(null);
+  const [activeProfile, setActiveProfile] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   const retryDelayRef = useRef(1000);
   // Version counter: prevents stale fetch responses from overwriting newer data.
   // Each fetch increments the counter; only the latest version's response is applied.
   const fetchVersionRef = useRef(0);
+
+  // Bumping this key forces the SSE connection to tear down and reconnect
+  // (used after profile switches so the watcher targets the new workspace).
+  const [sseReconnectKey, setSseReconnectKey] = useState(0);
 
   // Fetch the workspace tree from the tree API
   const fetchWorkspaceTree = useCallback(async () => {
@@ -46,6 +51,7 @@ export function useWorkspaceWatcher() {
         setExists(data.exists ?? false);
         setWorkspaceRoot(data.workspaceRoot ?? null);
         setOpenclawDir(data.openclawDir ?? null);
+        setActiveProfile(data.profile ?? null);
         setLoading(false);
       }
     } catch {
@@ -104,6 +110,12 @@ export function useWorkspaceWatcher() {
 
   // Manual refresh for use after mutations
   const refresh = useCallback(() => {
+    void fetchTree();
+  }, [fetchTree]);
+
+  // Force SSE reconnection + tree refresh (e.g. after profile switch).
+  const reconnect = useCallback(() => {
+    setSseReconnectKey((k) => k + 1);
     void fetchTree();
   }, [fetchTree]);
 
@@ -197,7 +209,7 @@ export function useWorkspaceWatcher() {
       if (reconnectTimeout) {clearTimeout(reconnectTimeout);}
       if (debounceTimer) {clearTimeout(debounceTimer);}
     };
-  }, [browseDirRaw, fetchWorkspaceTree]);
+  }, [browseDirRaw, fetchWorkspaceTree, sseReconnectKey]);
 
-  return { tree, loading, exists, refresh, browseDir, setBrowseDir, parentDir, workspaceRoot, openclawDir };
+  return { tree, loading, exists, refresh, reconnect, browseDir, setBrowseDir, parentDir, workspaceRoot, openclawDir, activeProfile };
 }

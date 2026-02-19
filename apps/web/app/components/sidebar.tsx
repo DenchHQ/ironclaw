@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { FileManagerTree } from "./workspace/file-manager-tree";
+import { ProfileSwitcher } from "./workspace/profile-switcher";
+import { CreateWorkspaceDialog } from "./workspace/create-workspace-dialog";
 
 // --- Types ---
 
@@ -352,6 +354,8 @@ export function Sidebar({
   const [dailyLogs, setDailyLogs] = useState<MemoryFile[]>([]);
   const [workspaceTree, setWorkspaceTree] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
 
   const toggleSection = (section: SidebarSection) => {
     setOpenSections((prev) => {
@@ -362,7 +366,12 @@ export function Sidebar({
     });
   };
 
-  // Fetch sidebar data (re-runs when refreshKey changes)
+  // Full sidebar re-fetch after profile switch or workspace creation
+  const handleProfileSwitch = useCallback(() => {
+    setSidebarRefreshKey((k) => k + 1);
+  }, []);
+
+  // Fetch sidebar data (re-runs when refreshKey or sidebarRefreshKey changes)
   useEffect(() => {
     async function load() {
       setLoading(true);
@@ -385,7 +394,7 @@ export function Sidebar({
       }
     }
     void load();
-  }, [refreshKey]);
+  }, [refreshKey, sidebarRefreshKey]);
 
   const refreshWorkspace = useCallback(async () => {
     try {
@@ -399,31 +408,44 @@ export function Sidebar({
 
   return (
     <aside className="w-72 h-screen flex flex-col bg-[var(--color-surface)] border-r border-[var(--color-border)] overflow-hidden">
-      {/* Header with New Chat button */}
-      <div className="px-4 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-        <h1 className="text-base font-bold flex items-center gap-2">
-          <span>Ironclaw</span>
-        </h1>
-        <button
-          onClick={onNewSession}
-          title="New Chat"
-          className="p-1.5 rounded-md hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-[var(--color-border)]">
+        <div className="flex items-center justify-between mb-1.5">
+          <h1 className="text-base font-bold flex items-center gap-2">
+            <span>Ironclaw</span>
+          </h1>
+          <button
+            onClick={onNewSession}
+            title="New Chat"
+            className="p-1.5 rounded-md hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-        </button>
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+          </button>
+        </div>
+        <ProfileSwitcher
+          onProfileSwitch={handleProfileSwitch}
+          onCreateWorkspace={() => setShowCreateWorkspace(true)}
+        />
       </div>
+
+      {/* Create workspace dialog */}
+      <CreateWorkspaceDialog
+        isOpen={showCreateWorkspace}
+        onClose={() => setShowCreateWorkspace(false)}
+        onCreated={handleProfileSwitch}
+      />
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto py-2 space-y-1">
