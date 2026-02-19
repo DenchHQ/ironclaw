@@ -41,6 +41,8 @@ type WorkspaceSidebarProps = {
 	onClose?: () => void;
 	/** Active workspace profile name (null = default). */
 	activeProfile?: string | null;
+	/** Fixed width in px when not mobile (overrides default 260). */
+	width?: number;
 	/** Called after the user switches to a different profile. */
 	onProfileSwitch?: () => void;
 };
@@ -401,15 +403,17 @@ export function WorkspaceSidebar({
 	onClose,
 	activeProfile,
 	onProfileSwitch,
+	width: widthProp,
 }: WorkspaceSidebarProps) {
 	const isBrowsing = browseDir != null;
 	const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+	const width = mobile ? "280px" : (widthProp ?? 260);
 
 	const sidebar = (
 		<aside
 			className={`flex flex-col h-screen flex-shrink-0 ${mobile ? "drawer-left" : "border-r"}`}
 			style={{
-				width: mobile ? "280px" : "260px",
+				width: typeof width === "number" ? `${width}px` : width,
 				background: "var(--color-surface)",
 				borderColor: "var(--color-border)",
 			}}
@@ -466,7 +470,7 @@ export function WorkspaceSidebar({
 						<button
 							type="button"
 							onClick={() => void onGoToChat?.()}
-							className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer transition-opacity"
+							className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 cursor-pointer transition-opacity"
 							style={{
 								background: "var(--color-accent-light)",
 								color: "var(--color-accent)",
@@ -480,49 +484,58 @@ export function WorkspaceSidebar({
 								<polyline points="9 22 9 12 15 12 15 22" />
 							</svg>
 						</button>
-						<div className="flex-1 min-w-0">
-							<div
-								className="text-sm font-medium truncate"
-								style={{ color: "var(--color-text)" }}
-							>
-								{orgName || "Workspace"}
-							</div>
-							<div
-								className="text-[11px] flex items-center gap-1"
-								style={{
-									color: "var(--color-text-muted)",
-								}}
-							>
-								<span>Ironclaw</span>
-								{activeProfile && activeProfile !== "default" && (
-									<span
-										className="px-1 py-0.5 rounded text-[10px]"
-										style={{
-											background: "var(--color-accent-light)",
-											color: "var(--color-accent)",
-										}}
+						<ProfileSwitcher
+							onProfileSwitch={onProfileSwitch}
+							onCreateWorkspace={() => setShowCreateWorkspace(true)}
+							trigger={({ isOpen, onClick, activeProfile: profileName, switching }) => (
+								<button
+									type="button"
+									onClick={onClick}
+									disabled={switching}
+									className="flex-1 min-w-0 w-full flex items-center justify-between gap-2 text-left rounded-lg py-1.5 px-2 transition-colors hover:bg-(--color-surface-hover) disabled:opacity-50"
+									style={{ color: "var(--color-text)" }}
+									title="Switch workspace profile"
+								>
+									<div className="min-w-0 truncate">
+										<div
+											className="text-sm font-medium truncate"
+											style={{ color: "var(--color-text)" }}
+										>
+											{orgName || "Workspace"}
+										</div>
+										<div
+											className="text-[11px] flex items-center gap-1 truncate"
+											style={{ color: "var(--color-text-muted)" }}
+										>
+											<span>Ironclaw</span>
+											{profileName && profileName !== "default" && (
+												<span
+													className="px-1 py-0.5 rounded text-[10px] shrink-0"
+													style={{
+														background: "var(--color-accent-light)",
+														color: "var(--color-accent)",
+													}}
+												>
+													{profileName}
+												</span>
+											)}
+										</div>
+									</div>
+									<svg
+										className={`w-3.5 h-3.5 shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`}
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+										style={{ color: "var(--color-text-muted)" }}
 									>
-										{activeProfile}
-									</span>
-								)}
-							</div>
-						</div>
+										<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+									</svg>
+								</button>
+							)}
+						/>
 					</>
 				)}
 			</div>
-
-			{/* Profile switcher — only in workspace mode */}
-			{!isBrowsing && (
-				<div
-					className="px-3 py-1.5 border-b"
-					style={{ borderColor: "var(--color-border)" }}
-				>
-					<ProfileSwitcher
-						onProfileSwitch={onProfileSwitch}
-						onCreateWorkspace={() => setShowCreateWorkspace(true)}
-					/>
-				</div>
-			)}
 
 			{/* Create workspace dialog */}
 			<CreateWorkspaceDialog

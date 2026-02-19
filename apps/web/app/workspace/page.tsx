@@ -142,6 +142,72 @@ function rawFileUrl(path: string): string {
   return `/api/workspace/raw-file?path=${encodeURIComponent(path)}`;
 }
 
+const LEFT_SIDEBAR_MIN = 200;
+const LEFT_SIDEBAR_MAX = 480;
+const RIGHT_SIDEBAR_MIN = 260;
+const RIGHT_SIDEBAR_MAX = 600;
+const STORAGE_LEFT = "ironclaw-workspace-left-sidebar-width";
+const STORAGE_RIGHT = "ironclaw-workspace-right-sidebar-width";
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Vertical resize handle; uses cursor position so the handle follows the mouse (no stuck-at-limit). */
+function ResizeHandle({
+  mode,
+  containerRef,
+  min,
+  max,
+  onResize,
+}: {
+  mode: "left" | "right";
+  containerRef: React.RefObject<HTMLElement | null>;
+  min: number;
+  max: number;
+  onResize: (width: number) => void;
+}) {
+  const [isDragging, setIsDragging] = useState(false);
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      const move = (ev: MouseEvent) => {
+        const el = containerRef.current;
+        if (!el) {return;}
+        const rect = el.getBoundingClientRect();
+        const width =
+          mode === "left"
+            ? ev.clientX - rect.left
+            : rect.right - ev.clientX;
+        onResize(clamp(width, min, max));
+      };
+      const up = () => {
+        setIsDragging(false);
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        document.body.style.removeProperty("user-select");
+        document.body.style.removeProperty("cursor");
+      };
+      document.body.style.setProperty("user-select", "none");
+      document.body.style.setProperty("cursor", "col-resize");
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    },
+    [containerRef, mode, min, max, onResize],
+  );
+  const showHover = isDragging || undefined;
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      onMouseDown={onMouseDown}
+      className={`shrink-0 w-1 cursor-col-resize flex justify-center transition-colors ${showHover ? "bg-blue-600/30" : "hover:bg-blue-600/30"}`}
+      style={{ minWidth: 4 }}
+    />
+  );
+}
+
 /** Find a node in the tree by exact path. */
 function findNode(
   tree: TreeNode[],
@@ -229,6 +295,8 @@ function WorkspacePageInner() {
   const chatRef = useRef<ChatPanelHandle>(null);
   // Compact (file-scoped) chat panel ref for sidebar drag-and-drop
   const compactChatRef = useRef<ChatPanelHandle>(null);
+  // Root layout ref for resize handle position (handle follows cursor)
+  const layoutRef = useRef<HTMLDivElement>(null);
 
   // Live-reactive tree via SSE watcher (with browse-mode support)
   const {
@@ -307,6 +375,26 @@ function WorkspacePageInner() {
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatSessionsOpen, setChatSessionsOpen] = useState(false);
+
+  // Resizable sidebar widths (desktop only; persisted in localStorage)
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(() => {
+    if (typeof window === "undefined") {return 260;}
+    const v = window.localStorage.getItem(STORAGE_LEFT);
+    const n = v ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) ? clamp(n, LEFT_SIDEBAR_MIN, LEFT_SIDEBAR_MAX) : 260;
+  });
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(() => {
+    if (typeof window === "undefined") {return 320;}
+    const v = window.localStorage.getItem(STORAGE_RIGHT);
+    const n = v ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) ? clamp(n, RIGHT_SIDEBAR_MIN, RIGHT_SIDEBAR_MAX) : 320;
+  });
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_LEFT, String(leftSidebarWidth));
+  }, [leftSidebarWidth]);
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_RIGHT, String(rightSidebarWidth));
+  }, [rightSidebarWidth]);
 
   // Derive file context for chat sidebar directly from activePath (stable across loading).
   // Exclude reserved virtual paths (~chats, ~cron, etc.) where file-scoped chat is irrelevant.
@@ -919,8 +1007,13 @@ function WorkspacePageInner() {
 
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-    <div className="flex h-screen" style={{ background: "var(--color-bg)" }} onClick={handleContainerClick}>
-      {/* Sidebar — static on desktop, drawer overlay on mobile */}
+    <div
+      ref={layoutRef}
+      className="flex h-screen"
+      style={{ background: "var(--color-bg)" }}
+      onClick={handleContainerClick}
+    >
+      {/* Left sidebar — static on desktop (resizable), drawer overlay on mobile */}
       {isMobile ? (
         sidebarOpen && (
           <WorkspaceSidebar
@@ -945,24 +1038,36 @@ function WorkspacePageInner() {
           />
         )
       ) : (
-        <WorkspaceSidebar
-          tree={enhancedTree}
-          activePath={activePath}
-          onSelect={handleNodeSelect}
-          onRefresh={refreshTree}
-          orgName={context?.organization?.name}
-          loading={treeLoading}
-          browseDir={browseDir}
-          parentDir={effectiveParentDir}
-          onNavigateUp={handleNavigateUp}
-          onGoHome={handleGoHome}
-          onFileSearchSelect={handleFileSearchSelect}
-          workspaceRoot={workspaceRoot}
-          onGoToChat={handleGoToChat}
-          onExternalDrop={handleSidebarExternalDrop}
-          activeProfile={activeProfile}
-          onProfileSwitch={handleProfileSwitch}
-        />
+        <>
+          <div className="flex shrink-0 flex-col" style={{ width: leftSidebarWidth }}>
+            <WorkspaceSidebar
+              tree={enhancedTree}
+              activePath={activePath}
+              onSelect={handleNodeSelect}
+              onRefresh={refreshTree}
+              orgName={context?.organization?.name}
+              loading={treeLoading}
+              browseDir={browseDir}
+              parentDir={effectiveParentDir}
+              onNavigateUp={handleNavigateUp}
+              onGoHome={handleGoHome}
+              onFileSearchSelect={handleFileSearchSelect}
+              workspaceRoot={workspaceRoot}
+              onGoToChat={handleGoToChat}
+              onExternalDrop={handleSidebarExternalDrop}
+              activeProfile={activeProfile}
+              onProfileSwitch={handleProfileSwitch}
+              width={leftSidebarWidth}
+            />
+          </div>
+          <ResizeHandle
+            mode="left"
+            containerRef={layoutRef}
+            min={LEFT_SIDEBAR_MIN}
+            max={LEFT_SIDEBAR_MAX}
+            onResize={setLeftSidebarWidth}
+          />
+        </>
       )}
 
       {/* Main content */}
@@ -1127,26 +1232,38 @@ function WorkspacePageInner() {
                   />
                 )
               ) : (
-                <ChatSessionsSidebar
-                  sessions={sessions}
-                  activeSessionId={activeSessionId}
-                  activeSessionTitle={activeSessionTitle}
-                  streamingSessionIds={streamingSessionIds}
-                  subagents={subagents}
-                  activeSubagentKey={activeSubagentKey}
-                  onSelectSession={(sessionId) => {
-                    setActiveSessionId(sessionId);
-                    setActiveSubagentKey(null);
-                    void chatRef.current?.loadSession(sessionId);
-                  }}
-                  onNewSession={() => {
-                    setActiveSessionId(null);
-                    setActiveSubagentKey(null);
-                    void chatRef.current?.newSession();
-                    router.replace("/workspace", { scroll: false });
-                  }}
-                  onSelectSubagent={handleSelectSubagent}
-                />
+                <>
+                  <ResizeHandle
+                    mode="right"
+                    containerRef={layoutRef}
+                    min={RIGHT_SIDEBAR_MIN}
+                    max={RIGHT_SIDEBAR_MAX}
+                    onResize={setRightSidebarWidth}
+                  />
+                  <div className="flex shrink-0 flex-col" style={{ width: rightSidebarWidth }}>
+                    <ChatSessionsSidebar
+                      sessions={sessions}
+                      activeSessionId={activeSessionId}
+                      activeSessionTitle={activeSessionTitle}
+                      streamingSessionIds={streamingSessionIds}
+                      subagents={subagents}
+                      activeSubagentKey={activeSubagentKey}
+                      onSelectSession={(sessionId) => {
+                        setActiveSessionId(sessionId);
+                        setActiveSubagentKey(null);
+                        void chatRef.current?.loadSession(sessionId);
+                      }}
+                      onNewSession={() => {
+                        setActiveSessionId(null);
+                        setActiveSubagentKey(null);
+                        void chatRef.current?.newSession();
+                        router.replace("/workspace", { scroll: false });
+                      }}
+                      onSelectSubagent={handleSelectSubagent}
+                      width={rightSidebarWidth}
+                    />
+                  </div>
+                </>
               )}
             </>
           ) : (
@@ -1176,21 +1293,30 @@ function WorkspacePageInner() {
 
               {/* Chat sidebar (file/folder-scoped) — hidden for reserved paths, hidden on mobile */}
               {!isMobile && fileContext && showChatSidebar && (
-                <aside
-                  className="flex-shrink-0 border-l"
-                  style={{
-                    width: 380,
-                    borderColor: "var(--color-border)",
-                    background: "var(--color-bg)",
-                  }}
-                >
-                  <ChatPanel
-                    ref={compactChatRef}
-                    compact
-                    fileContext={fileContext}
-                    onFileChanged={handleFileChanged}
+                <>
+                  <ResizeHandle
+                    mode="right"
+                    containerRef={layoutRef}
+                    min={RIGHT_SIDEBAR_MIN}
+                    max={RIGHT_SIDEBAR_MAX}
+                    onResize={setRightSidebarWidth}
                   />
-                </aside>
+                  <aside
+                    className="flex-shrink-0 border-l flex flex-col"
+                    style={{
+                      width: rightSidebarWidth,
+                      borderColor: "var(--color-border)",
+                      background: "var(--color-bg)",
+                    }}
+                  >
+                    <ChatPanel
+                      ref={compactChatRef}
+                      compact
+                      fileContext={fileContext}
+                      onFileChanged={handleFileChanged}
+                    />
+                  </aside>
+                </>
               )}
             </>
           )}

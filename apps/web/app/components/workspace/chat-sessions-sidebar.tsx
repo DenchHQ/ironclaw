@@ -38,6 +38,8 @@ type ChatSessionsSidebarProps = {
 	mobile?: boolean;
 	/** Close the mobile drawer. */
 	onClose?: () => void;
+	/** Fixed width in px when not mobile (overrides default 260). */
+	width?: number;
 };
 
 /** Format a timestamp into a human-readable relative time string. */
@@ -123,6 +125,7 @@ export function ChatSessionsSidebar({
 	onSelectSubagent,
 	mobile,
 	onClose,
+	width: widthProp,
 }: ChatSessionsSidebarProps) {
 	const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -160,11 +163,12 @@ export function ChatSessionsSidebar({
 	// Group sessions: today, yesterday, this week, this month, older
 	const grouped = groupSessions(sessions);
 
+	const width = mobile ? "280px" : (widthProp ?? 260);
 	const sidebar = (
 		<aside
 			className={`flex flex-col h-full flex-shrink-0 ${mobile ? "drawer-right" : "border-l"}`}
 			style={{
-				width: mobile ? "280px" : 260,
+				width: typeof width === "number" ? `${width}px` : width,
 				borderColor: "var(--color-border)",
 				background: "var(--color-surface)",
 			}}
