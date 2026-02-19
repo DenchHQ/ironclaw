@@ -23,6 +23,8 @@ import {
 export type ChatEditorHandle = {
 	/** Insert a file mention node programmatically. */
 	insertFileMention: (name: string, path: string) => void;
+	/** Insert plain text at the current cursor position. */
+	insertText: (text: string) => void;
 	/** Clear the editor content. */
 	clear: () => void;
 	/** Focus the editor. */
@@ -370,6 +372,9 @@ export const ChatEditor = forwardRef<ChatEditorHandle, ChatEditorProps>(
 						{ type: "text", text: " " },
 					])
 					.run();
+			},
+			insertText: (text: string) => {
+				editor?.chain().focus().insertContent(text).run();
 			},
 			clear: () => {
 				editor?.commands.clearContent(true);

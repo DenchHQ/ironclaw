@@ -25,6 +25,7 @@ import { CronDashboard } from "../components/cron/cron-dashboard";
 import { CronJobDetail } from "../components/cron/cron-job-detail";
 import type { CronJob, CronJobsResponse } from "../types/cron";
 import { useIsMobile } from "../hooks/use-mobile";
+import { SettingsView } from "../components/workspace/settings-view";
 import { ObjectFilterBar } from "../components/workspace/object-filter-bar";
 import { type FilterGroup, type SavedView, emptyFilterGroup, matchesFilter } from "@/lib/object-filters";
 
@@ -97,7 +98,8 @@ type ContentState =
   | { kind: "directory"; node: TreeNode }
   | { kind: "cron-dashboard" }
   | { kind: "cron-job"; jobId: string; job: CronJob }
-  | { kind: "duckdb-missing" };
+  | { kind: "duckdb-missing" }
+  | { kind: "settings" };
 
 type WebSession = {
   id: string;
@@ -854,8 +856,8 @@ function WorkspacePageInner() {
     return s?.title || undefined;
   }, [activeSessionId, sessions]);
 
-  // Whether to show the main ChatPanel (no file/content selected)
-  const showMainChat = !activePath || content.kind === "none";
+  // Whether to show the main ChatPanel (default when no file/content is selected)
+  const showMainChat = content.kind === "none";
 
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
@@ -877,6 +879,11 @@ function WorkspacePageInner() {
             onFileSearchSelect={(item) => { handleFileSearchSelect?.(item); setSidebarOpen(false); }}
             workspaceRoot={workspaceRoot}
             onGoToChat={() => { handleGoToChat(); setSidebarOpen(false); }}
+            onGoToSettings={() => {
+               setActivePath(null);
+               setContent({ kind: "settings" });
+               setSidebarOpen(false);
+            }}
             onExternalDrop={handleSidebarExternalDrop}
             mobile
             onClose={() => setSidebarOpen(false)}
@@ -897,6 +904,10 @@ function WorkspacePageInner() {
           onFileSearchSelect={handleFileSearchSelect}
           workspaceRoot={workspaceRoot}
           onGoToChat={handleGoToChat}
+          onGoToSettings={() => {
+             setActivePath(null);
+             setContent({ kind: "settings" });
+          }}
           onExternalDrop={handleSidebarExternalDrop}
         />
       )}
@@ -1294,6 +1305,9 @@ function ContentRenderer({
 
     case "duckdb-missing":
       return <DuckDBMissing />;
+
+    case "settings":
+      return <SettingsView />;
 
     case "none":
     default:

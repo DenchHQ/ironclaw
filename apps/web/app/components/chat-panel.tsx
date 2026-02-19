@@ -18,6 +18,48 @@ import {
 } from "./file-picker-modal";
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
 
+declare global {
+	interface Window {
+		SpeechRecognition: new () => SpeechRecognition;
+		webkitSpeechRecognition: new () => SpeechRecognition;
+	}
+}
+
+interface SpeechRecognitionEvent extends Event {
+	results: SpeechRecognitionResultList;
+	resultIndex: number;
+}
+
+interface SpeechRecognitionResultList {
+	length: number;
+	item(index: number): SpeechRecognitionResult;
+	[index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+	length: number;
+	item(index: number): SpeechRecognitionAlternative;
+	[index: number]: SpeechRecognitionAlternative;
+	isFinal: boolean;
+}
+
+interface SpeechRecognitionAlternative {
+	transcript: string;
+	confidence: number;
+}
+
+interface SpeechRecognition extends EventTarget {
+	continuous: boolean;
+	interimResults: boolean;
+	lang: string;
+	onstart: (() => void) | null;
+	onresult: ((event: SpeechRecognitionEvent) => void) | null;
+	onerror: ((event: Event) => void) | null;
+	onend: (() => void) | null;
+	start(): void;
+	stop(): void;
+}
+
 // ── Attachment types & helpers ──
 
 type AttachedFile = {
@@ -502,6 +544,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		>([]);
 		const [showFilePicker, setShowFilePicker] =
 			useState(false);
+
+		// ── Voice input state ──
+		const [isListening, setIsListening] = useState(false);
+		const recognitionRef = useRef<SpeechRecognition | null>(null);
 
 		// ── Reconnection state ──
 		const [isReconnecting, setIsReconnecting] = useState(false);
@@ -1280,6 +1326,55 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			[],
 		);
 
+		// ── Voice input handler ──
+		const toggleVoiceInput = useCallback(() => {
+			if (isListening) {
+				recognitionRef.current?.stop();
+				setIsListening(false);
+				return;
+			}
+
+			const SpeechRecognitionAPI =
+				window.SpeechRecognition || window.webkitSpeechRecognition;
+			if (!SpeechRecognitionAPI) {
+				console.warn("Speech recognition not supported in this browser");
+				return;
+			}
+
+			const recognition = new SpeechRecognitionAPI();
+			recognition.continuous = true;
+			recognition.interimResults = true;
+			recognition.lang = "en-US";
+
+			recognition.onstart = () => {
+				setIsListening(true);
+			};
+
+			recognition.onresult = (event) => {
+				let finalTranscript = "";
+				for (let i = event.resultIndex; i < event.results.length; i++) {
+					const transcript = event.results[i][0].transcript;
+					if (event.results[i].isFinal) {
+						finalTranscript += transcript;
+					}
+				}
+				if (finalTranscript) {
+					editorRef.current?.insertText(finalTranscript + " ");
+				}
+			};
+
+			recognition.onerror = () => {
+				setIsListening(false);
+			};
+
+			recognition.onend = () => {
+				setIsListening(false);
+			};
+
+			recognitionRef.current = recognition;
+			recognition.start();
+		}, [isListening]);
+
 		// ── Status label ──
 
 		const statusLabel = loadingSession
@@ -1756,6 +1851,42 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 									</svg>
 								</button>
 							)}
+								<button
+									type="button"
+									onClick={toggleVoiceInput}
+									className={`p-1.5 rounded-lg hover:opacity-80 transition-opacity ${isListening ? "animate-pulse" : ""}`}
+									style={{
+										color: isListening ? "var(--color-accent)" : "var(--color-text-muted)",
+									}}
+									title={isListening ? "Stop recording" : "Voice input"}
+								>
+									{isListening ? (
+										<svg
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="currentColor"
+										>
+											<rect x="6" y="6" width="12" height="12" rx="2" />
+										</svg>
+									) : (
+										<svg
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										>
+											<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+											<path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+											<line x1="12" y1="19" x2="12" y2="23" />
+											<line x1="8" y1="23" x2="16" y2="23" />
+										</svg>
+									)}
+								</button>
 								<button
 									type="button"
 									onClick={() => {
