@@ -520,6 +520,7 @@ export function WorkspaceSidebar({
 					<ProfileSwitcher
 						onProfileSwitch={onProfileSwitch}
 						onCreateWorkspace={() => setShowCreateWorkspace(true)}
+						activeProfileHint={activeProfile}
 					/>
 				</div>
 			)}

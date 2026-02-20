@@ -13,9 +13,11 @@ export type ProfileInfo = {
 type ProfileSwitcherProps = {
   onProfileSwitch?: () => void;
   onCreateWorkspace?: () => void;
+  /** Parent-tracked active profile — triggers a re-fetch when it changes (e.g. after workspace creation). */
+  activeProfileHint?: string | null;
 };
 
-export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace }: ProfileSwitcherProps) {
+export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace, activeProfileHint }: ProfileSwitcherProps) {
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [activeProfile, setActiveProfile] = useState("default");
   const [isOpen, setIsOpen] = useState(false);
@@ -35,7 +37,7 @@ export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace }: ProfileS
 
   useEffect(() => {
     void fetchProfiles();
-  }, [fetchProfiles]);
+  }, [fetchProfiles, activeProfileHint]);
 
   // Close dropdown on outside click
   useEffect(() => {
