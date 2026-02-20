@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, existsSync, type Dirent } from "node:fs";
+import { readdirSync, readFileSync, existsSync, statSync, type Dirent } from "node:fs";
 import { join } from "node:path";
 import { resolveWorkspaceRoot, resolveOpenClawStateDir, getEffectiveProfile, parseSimpleYaml, duckdbQueryAll, isDatabaseFile } from "@/lib/workspace";
 
@@ -14,6 +14,8 @@ export type TreeNode = {
   children?: TreeNode[];
   /** Virtual nodes live outside the main workspace (e.g. Skills, Memories). */
   virtual?: boolean;
+  /** True when the entry is a symbolic link. */
+  symlink?: boolean;
 };
 
 type DbObject = {
@@ -58,11 +60,28 @@ function loadDbObjects(): Map<string, DbObject> {
   return map;
 }
 
+/** Resolve a dirent's effective type, following symlinks to their target. */
+function resolveEntryType(entry: Dirent, absPath: string): "directory" | "file" | null {
+  if (entry.isDirectory()) {return "directory";}
+  if (entry.isFile()) {return "file";}
+  if (entry.isSymbolicLink()) {
+    try {
+      const st = statSync(absPath);
+      if (st.isDirectory()) {return "directory";}
+      if (st.isFile()) {return "file";}
+    } catch {
+      // Broken symlink -- skip
+    }
+  }
+  return null;
+}
+
 /** Recursively build a tree from a workspace directory. */
 function buildTree(
   absDir: string,
   relativeBase: string,
   dbObjects: Map<string, DbObject>,
+  showHidden = false,
 ): TreeNode[] {
   const nodes: TreeNode[] = [];
 
@@ -73,32 +92,44 @@ function buildTree(
     return nodes;
   }
 
+  const filtered = entries.filter((e) => {
+    // .object.yaml is always needed for metadata; also shown as a node when showHidden is on
+    if (e.name === ".object.yaml") {return true;}
+    if (e.name.startsWith(".")) {return showHidden;}
+    return true;
+  });
+
   // Sort: directories first, then files, alphabetical within each group
-  const sorted = entries
-    .filter((e) => !e.name.startsWith(".") || e.name === ".object.yaml")
-    .toSorted((a, b) => {
-      if (a.isDirectory() && !b.isDirectory()) {return -1;}
-      if (!a.isDirectory() && b.isDirectory()) {return 1;}
-      return a.name.localeCompare(b.name);
-    });
+  const sorted = filtered.toSorted((a, b) => {
+    const absA = join(absDir, a.name);
+    const absB = join(absDir, b.name);
+    const typeA = resolveEntryType(a, absA);
+    const typeB = resolveEntryType(b, absB);
+    const dirA = typeA === "directory";
+    const dirB = typeB === "directory";
+    if (dirA && !dirB) {return -1;}
+    if (!dirA && dirB) {return 1;}
+    return a.name.localeCompare(b.name);
+  });
 
   for (const entry of sorted) {
-    // Skip hidden files except .object.yaml (but don't list it as a node)
-    if (entry.name === ".object.yaml") {continue;}
-    if (entry.name.startsWith(".")) {continue;}
+    // .object.yaml is consumed for metadata; only show it as a visible node when revealing hidden files
+    if (entry.name === ".object.yaml" && !showHidden) {continue;}
 
     const absPath = join(absDir, entry.name);
     const relPath = relativeBase
       ? `${relativeBase}/${entry.name}`
       : entry.name;
 
-    if (entry.isDirectory()) {
+    const isSymlink = entry.isSymbolicLink();
+    const effectiveType = resolveEntryType(entry, absPath);
+
+    if (effectiveType === "directory") {
       const objectMeta = readObjectMeta(absPath);
       const dbObject = dbObjects.get(entry.name);
-      const children = buildTree(absPath, relPath, dbObjects);
+      const children = buildTree(absPath, relPath, dbObjects, showHidden);
 
       if (objectMeta || dbObject) {
-        // This directory represents a CRM object (from .object.yaml OR DuckDB)
         nodes.push({
           name: entry.name,
           path: relPath,
@@ -109,17 +140,18 @@ function buildTree(
               | "table"
               | "kanban") ?? "table",
           children: children.length > 0 ? children : undefined,
+          ...(isSymlink && { symlink: true }),
         });
       } else {
-        // Regular folder
         nodes.push({
           name: entry.name,
           path: relPath,
           type: "folder",
           children: children.length > 0 ? children : undefined,
+          ...(isSymlink && { symlink: true }),
         });
       }
-    } else if (entry.isFile()) {
+    } else if (effectiveType === "file") {
       const ext = entry.name.split(".").pop()?.toLowerCase();
       const isReport = entry.name.endsWith(".report.json");
       const isDocument = ext === "md" || ext === "mdx";
@@ -129,6 +161,7 @@ function buildTree(
         name: entry.name,
         path: relPath,
         type: isReport ? "report" : isDatabase ? "database" : isDocument ? "document" : "file",
+        ...(isSymlink && { symlink: true }),
       });
     }
   }
@@ -206,27 +239,24 @@ function buildSkillsVirtualFolder(): TreeNode | null {
 }
 
 
-export async function GET() {
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const showHidden = url.searchParams.get("showHidden") === "1";
+
   const openclawDir = resolveOpenClawStateDir();
   const profile = getEffectiveProfile();
   const root = resolveWorkspaceRoot();
   if (!root) {
-    // Even without a workspace, return virtual folders if they exist
     const tree: TreeNode[] = [];
     const skillsFolder = buildSkillsVirtualFolder();
     if (skillsFolder) {tree.push(skillsFolder);}
     return Response.json({ tree, exists: false, workspaceRoot: null, openclawDir, profile });
   }
 
-  // Load objects from DuckDB for smart directory detection
   const dbObjects = loadDbObjects();
 
-  // Scan the workspace root — it IS the knowledge base.
-  // All top-level directories, files, objects, and documents are visible
-  // in the sidebar (USER.md, SOUL.md, memory/, etc. are all part of the tree).
-  const tree = buildTree(root, "", dbObjects);
+  const tree = buildTree(root, "", dbObjects, showHidden);
 
-  // Virtual folders go after all real files/folders
   const skillsFolder = buildSkillsVirtualFolder();
   if (skillsFolder) {tree.push(skillsFolder);}
 
