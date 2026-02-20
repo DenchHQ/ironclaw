@@ -1,3 +1,4 @@
+import { exec } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, normalize, resolve } from "node:path";
@@ -39,7 +40,24 @@ export async function GET(req: Request) {
 	const expandedPath = candidatePath.startsWith("~/")
 		? candidatePath.replace(/^~/, homedir())
 		: candidatePath;
-	const resolvedPath = resolve(normalize(expandedPath));
+	let resolvedPath = resolve(normalize(expandedPath));
+
+	// If the path doesn't exist and looks like a bare filename, try to locate it
+	// using macOS Spotlight (mdfind).
+	if (!existsSync(resolvedPath) && !rawPath.includes("/")) {
+		const found = await new Promise<string | null>((res) => {
+			exec(
+				`mdfind -name ${JSON.stringify(rawPath)} | head -1`,
+				(err, stdout) => {
+					if (err || !stdout.trim()) {res(null);}
+					else {res(stdout.trim().split("\n")[0]);}
+				},
+			);
+		});
+		if (found && existsSync(found)) {
+			resolvedPath = found;
+		}
+	}
 
 	if (!existsSync(resolvedPath)) {
 		return Response.json(

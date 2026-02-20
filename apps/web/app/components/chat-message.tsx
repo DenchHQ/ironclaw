@@ -452,17 +452,28 @@ function AttachedFilesCard({ paths }: { paths: string[] }) {
 function looksLikeFilePath(text: string): boolean {
 	const t = text.trim();
 	if (!t || t.length < 3 || t.length > 500) {return false;}
-	// Must start with a path prefix
-	if (!(t.startsWith("~/") || t.startsWith("/") || t.startsWith("./") || t.startsWith("../"))) {
-		return false;
+	// Full path prefix
+	if (t.startsWith("~/") || t.startsWith("/") || t.startsWith("./") || t.startsWith("../")) {
+		const afterPrefix = t.startsWith("~/") ? t.slice(2) :
+			t.startsWith("../") ? t.slice(3) :
+			t.startsWith("./") ? t.slice(2) :
+			t.slice(1);
+		return afterPrefix.includes("/") || afterPrefix.includes(".");
 	}
-	// Must have at least one path separator beyond the prefix
-	// (avoids matching bare `/` or standalone commands like `/bin`)
-	const afterPrefix = t.startsWith("~/") ? t.slice(2) :
-		t.startsWith("../") ? t.slice(3) :
-		t.startsWith("./") ? t.slice(2) :
-		t.slice(1);
-	return afterPrefix.includes("/") || afterPrefix.includes(".");
+	// Bare filename with a known extension (e.g. "Rachapoom-Passport.pdf")
+	const fileExtPattern = /\.(pdf|docx?|xlsx?|pptx?|csv|txt|rtf|pages|numbers|key|md|json|yaml|yml|toml|xml|html?|css|jsx?|tsx?|py|rb|go|rs|java|cpp|c|h|sh|sql|swift|kt|png|jpe?g|gif|webp|svg|bmp|ico|heic|tiff|mp[34]|webm|mov|avi|mkv|flv|wav|ogg|aac|flac|m4a|zip|tar|gz|dmg)$/i;
+	if (fileExtPattern.test(t) && !t.includes(" ")) {
+		return true;
+	}
+	return false;
+}
+
+/** Check if text looks like a filename (allows spaces, used for bold text). */
+function looksLikeFileName(text: string): boolean {
+	const t = text.trim();
+	if (!t || t.length < 3 || t.length > 300) {return false;}
+	const fileExtPattern = /\.(pdf|docx?|xlsx?|pptx?|csv|txt|rtf|pages|numbers|key|md|json|yaml|yml|toml|xml|html?|css|jsx?|tsx?|py|rb|go|rs|java|cpp|c|h|sh|sql|swift|kt|png|jpe?g|gif|webp|svg|bmp|ico|heic|tiff|mp[34]|webm|mov|avi|mkv|flv|wav|ogg|aac|flac|m4a|zip|tar|gz|dmg)$/i;
+	return fileExtPattern.test(t);
 }
 
 /** Open a file path using the system default application. */
@@ -559,7 +570,8 @@ function FilePathCode({
 
 	return (
 		<code
-			className={`inline-flex items-center gap-[0.2em] px-[0.3em] py-0 whitespace-nowrap max-w-full overflow-hidden text-ellipsis no-underline transition-colors duration-150 rounded-md text-[color:var(--color-accent)] border border-[color:var(--color-border)] bg-white/20 hover:bg-white/40 active:bg-white ${status === "opening" ? "cursor-wait opacity-70" : "cursor-pointer"}`}
+			className={`px-[0.3em] no-underline transition-colors duration-150 rounded-[4px] border border-[color:var(--color-border)] bg-white/20 hover:bg-white/40 active:bg-white ${status === "opening" ? "cursor-wait opacity-70" : "cursor-pointer"}`}
+			style={{ color: "var(--color-accent)" }}
 			onClick={handleClick}
 			onContextMenu={handleContextMenu}
 			title={
@@ -570,30 +582,6 @@ function FilePathCode({
 						: "Click to open · Right-click to reveal in Finder"
 			}
 		>
-			<svg
-				width="12"
-				height="12"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				className="shrink-0 opacity-60"
-			>
-				{status === "error" ? (
-					<>
-						<circle cx="12" cy="12" r="10" />
-						<line x1="15" x2="9" y1="9" y2="15" />
-						<line x1="9" x2="15" y1="9" y2="15" />
-					</>
-				) : (
-					<>
-						<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-						<path d="M14 2v4a2 2 0 0 0 2 2h4" />
-					</>
-				)}
-			</svg>
 			{children}
 		</code>
 	);
@@ -710,6 +698,22 @@ function createMarkdownComponents(
 
 			// Regular inline code
 			return <code {...props}>{children}</code>;
+		},
+		// Bold text — detect filenames and make them clickable
+		strong: ({ children, ...props }) => {
+			const text = typeof children === "string" ? children
+				: Array.isArray(children) ? children.filter((c) => typeof c === "string").join("")
+				: "";
+			if (text && looksLikeFileName(text)) {
+				return (
+					<strong {...props}>
+						<FilePathCode path={text} onFilePathClick={onFilePathClick}>
+							{children}
+						</FilePathCode>
+					</strong>
+				);
+			}
+			return <strong {...props}>{children}</strong>;
 		},
 	};
 }

@@ -211,7 +211,7 @@ export function ChatSessionsSidebar({
 				width: typeof width === "number" ? `${width}px` : width,
 				minWidth: typeof width === "number" ? `${width}px` : width,
 				borderColor: "var(--color-border)",
-				background: "var(--color-surface)",
+				background: "var(--color-sidebar-bg)",
 			}}
 		>
 			{/* Scrollable list fills the sidebar; header overlays the top with blur */}
@@ -414,7 +414,7 @@ export function ChatSessionsSidebar({
 				style={{
 					height: headerHeight,
 					borderColor: "var(--color-border)",
-					background: "color-mix(in srgb, var(--color-surface) 80%, transparent)",
+					background: "color-mix(in srgb, var(--color-sidebar-bg) 80%, transparent)",
 				}}
 			>
 				<div className="min-w-0 flex-1">

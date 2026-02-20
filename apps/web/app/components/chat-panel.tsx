@@ -674,6 +674,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+		const [rawView, setRawView] = useState(false);
 
 		const filePath = fileContext?.path ?? null;
 
@@ -1549,6 +1550,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								</DropdownMenuTrigger>
 								<DropdownMenuContent align="end" side="bottom">
 									<DropdownMenuItem
+										onSelect={() => setRawView((v) => !v)}
+									>
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg>
+										{rawView ? "Rendered view" : "Raw view"}
+									</DropdownMenuItem>
+									<DropdownMenuItem
 										variant="destructive"
 										onSelect={() => onDeleteSession(currentSessionId)}
 									>
@@ -1692,7 +1699,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						<div
 							className={`${compact ? "" : "max-w-2xl mx-auto"} py-3`}
 						>
-						{messages.map((message, i) => (
+						{rawView ? (
+							<pre
+								className="text-xs whitespace-pre-wrap break-all font-mono p-4 rounded-xl"
+								style={{ color: "var(--color-text)", background: "var(--color-surface-hover)" }}
+							>
+								{JSON.stringify(messages, null, 2)}
+							</pre>
+						) : messages.map((message, i) => (
 							<ChatMessage
 								key={message.id}
 								message={message}
