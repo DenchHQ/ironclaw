@@ -347,93 +347,42 @@ function AttachFileIcon({ category }: { category: string }) {
 
 function AttachedFilesCard({ paths }: { paths: string[] }) {
 	return (
-		<div className="mb-2">
-			<div className="flex items-center gap-1.5 mb-2">
-				<svg
-					width="12"
-					height="12"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="2"
-					strokeLinecap="round"
-					strokeLinejoin="round"
-					style={{ opacity: 0.5 }}
-				>
-					<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-				</svg>
-				<span
-					className="text-[11px] font-medium uppercase tracking-wider"
-					style={{ opacity: 0.5 }}
-				>
-					{paths.length}{" "}
-					{paths.length === 1 ? "file" : "files"}{" "}
-					attached
-				</span>
-			</div>
-			<div className="flex flex-wrap gap-1.5">
-				{paths.map((filePath, i) => {
-					const category =
-						getCategoryFromPath(filePath);
-					const filename =
-						filePath.split("/").pop() ??
-						filePath;
-					const meta =
-						attachCategoryMeta[category] ??
-						attachCategoryMeta.other;
-					const short = shortenPath(filePath);
+		<div className="flex flex-wrap gap-1.5 mb-2 justify-end">
+			{paths.map((filePath, i) => {
+				const category = getCategoryFromPath(filePath);
+				const src = category === "image"
+					? `/api/workspace/raw-file?path=${encodeURIComponent(filePath)}`
+					: `/api/workspace/thumbnail?path=${encodeURIComponent(filePath)}&size=200`;
+				const ext = filePath.split(".").pop()?.toUpperCase() ?? "";
 
-					return (
-						<div
-							key={i}
-							className="flex-shrink-0 rounded-lg"
-							style={{
-								background:
-									"rgba(0,0,0,0.04)",
-								border: "1px solid rgba(0,0,0,0.06)",
-							}}
-						>
-							<div className="flex items-center gap-2 px-2.5 py-1.5">
-								<div
-									className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
-									style={{
-										background:
-											meta.bg,
-										color: meta.fg,
-									}}
-								>
-									<AttachFileIcon
-										category={
-											category
-										}
-									/>
-								</div>
-								<div className="min-w-0">
-									<p
-										className="text-[12px] font-medium truncate max-w-[160px]"
-										title={
-											filePath
-										}
-									>
-										{filename}
-									</p>
-									<p
-										className="text-[10px] truncate max-w-[160px]"
-										style={{
-											opacity: 0.45,
-										}}
-										title={
-											filePath
-										}
-									>
-										{short}
-									</p>
-								</div>
-							</div>
-						</div>
-					);
-				})}
-			</div>
+				return (
+					<div
+						key={i}
+						className="relative rounded-xl overflow-hidden shrink-0"
+					>
+						<img
+							src={src}
+							alt={filePath.split("/").pop() ?? ""}
+							className="block rounded-xl object-cover"
+							style={{ maxHeight: 140, maxWidth: 160, background: "rgba(0,0,0,0.04)" }}
+							loading="lazy"
+							onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+						/>
+						{category !== "image" && (
+							<span
+								className="absolute bottom-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase"
+								style={{
+									background: "rgba(255,255,255,0.85)",
+									color: "rgba(0,0,0,0.5)",
+									backdropFilter: "blur(4px)",
+								}}
+							>
+								{ext}
+							</span>
+						)}
+					</div>
+				);
+			})}
 		</div>
 	);
 }
@@ -741,35 +690,41 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onS
 		// Parse attachment prefix from sent messages
 		const attachmentInfo = parseAttachments(textContent);
 
+		if (attachmentInfo) {
+			return (
+				<div className="flex flex-col items-end gap-1.5 py-2">
+					{/* Attachment previews — standalone above the text bubble */}
+					<AttachedFilesCard paths={attachmentInfo.paths} />
+					{/* Text bubble */}
+					{attachmentInfo.message && (
+						<div
+							className="max-w-[80%] w-fit rounded-2xl rounded-br-sm px-3 py-2 text-sm leading-6 break-words chat-message-font"
+							style={{
+								background: "var(--color-user-bubble)",
+								color: "var(--color-user-bubble-text)",
+							}}
+						>
+							<p className="whitespace-pre-wrap break-words">
+								{attachmentInfo.message}
+							</p>
+						</div>
+					)}
+				</div>
+			);
+		}
+
 		return (
 			<div className="flex justify-end py-2">
 				<div
-					className="max-w-[80%] min-w-0 rounded-2xl rounded-br-sm px-3 py-2 text-sm leading-6 overflow-hidden break-all chat-message-font"
+					className="max-w-[80%] min-w-0 rounded-2xl rounded-br-sm px-3 py-2 text-sm leading-6 overflow-hidden break-words chat-message-font"
 					style={{
 						background: "var(--color-user-bubble)",
 						color: "var(--color-user-bubble-text)",
 					}}
 				>
-					{attachmentInfo ? (
-						<>
-							<AttachedFilesCard
-								paths={
-									attachmentInfo.paths
-								}
-							/>
-							{attachmentInfo.message && (
-								<p className="whitespace-pre-wrap break-all">
-									{
-										attachmentInfo.message
-									}
-								</p>
-							)}
-						</>
-					) : (
-						<p className="whitespace-pre-wrap break-all">
-							{textContent}
-						</p>
-					)}
+					<p className="whitespace-pre-wrap break-words text-right">
+						{textContent}
+					</p>
 				</div>
 			</div>
 		);

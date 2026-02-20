@@ -31,6 +31,10 @@ type AttachedFile = {
 	id: string;
 	name: string;
 	path: string;
+	/** True while the file is still uploading to the server. */
+	uploading?: boolean;
+	/** Local blob URL for instant preview before upload completes. */
+	localUrl?: string;
 };
 
 function getFileCategory(
@@ -228,12 +232,34 @@ function QueueItem({
 					}}
 				/>
 			) : (
-				<p
-					className="flex-1 text-[13px] leading-[1.45] line-clamp-2 min-w-0"
-					style={{ color: "var(--color-text-secondary)", whiteSpace: "pre-wrap" }}
-				>
-					{msg.text || (msg.attachedFiles.length > 0 ? `${msg.attachedFiles.length} file(s)` : "")}
-				</p>
+				<div className="flex-1 min-w-0 flex items-center gap-2">
+					{msg.attachedFiles.length > 0 && (
+						<div className="flex gap-1 shrink-0">
+							{msg.attachedFiles.map((af) => {
+								const cat = getFileCategory(af.name);
+								const src = cat === "image"
+									? (af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`)
+									: af.path ? `/api/workspace/thumbnail?path=${encodeURIComponent(af.path)}&size=100` : undefined;
+								return (
+									<img
+										key={af.id}
+										src={src}
+										alt={af.name}
+										className="rounded object-cover"
+										style={{ height: 28, width: 28, background: "var(--color-surface-hover)" }}
+										onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+									/>
+								);
+							})}
+						</div>
+					)}
+					<p
+						className="text-[13px] leading-[1.45] line-clamp-1 min-w-0"
+						style={{ color: "var(--color-text-secondary)" }}
+					>
+						{msg.text || `${msg.attachedFiles.length} ${msg.attachedFiles.length === 1 ? "file" : "files"}`}
+					</p>
+				</div>
 			)}
 			{!editing && (
 				<div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -294,26 +320,7 @@ function AttachmentStrip({
 	if (files.length === 0) {return null;}
 
 	return (
-		<div className={`${compact ? "px-2" : "px-3"} pb-2`}>
-			<div className="flex items-center justify-between mb-1.5">
-				<span
-					className="text-[10px] font-medium uppercase tracking-wider"
-					style={{ color: "var(--color-text-muted)" }}
-				>
-					{files.length}{" "}
-					{files.length === 1 ? "file" : "files"} attached
-				</span>
-				{files.length > 1 && (
-					<button
-						type="button"
-						onClick={onClearAll}
-						className="text-[10px] font-medium px-1.5 py-0.5 rounded hover:opacity-80 transition-opacity"
-						style={{ color: "var(--color-text-muted)" }}
-					>
-						Clear all
-					</button>
-				)}
-			</div>
+		<div className={`${compact ? "px-2" : "px-3"} pt-2`}>
 			<div
 				className="flex gap-2 overflow-x-auto pb-1"
 				style={{ scrollbarWidth: "thin" }}
@@ -367,29 +374,45 @@ function AttachmentStrip({
 							</button>
 
 							{category === "image" ? (
-								/* Image thumbnail preview */
-								<div className="flex flex-col items-center" style={{ width: 96 }}>
-									<img
-										src={`/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`}
-										alt={af.name}
-										className="w-full rounded-t-xl object-cover"
-										style={{ height: 56, background: "var(--color-bg-secondary)" }}
-										onError={(e) => {
-											(e.currentTarget as HTMLImageElement).style.display = "none";
-										}}
-									/>
-									<p
-										className="text-[10px] font-medium truncate w-full px-2 py-1.5 text-center"
-										style={{ color: "var(--color-text)" }}
-										title={af.path}
-									>
-										{af.name}
-									</p>
-								</div>
+								/* Image thumbnail — no filename */
+								<img
+									src={af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`}
+									alt={af.name}
+									className="block rounded-xl object-cover"
+									style={{
+										height: 80,
+										width: "auto",
+										minWidth: 60,
+										maxWidth: 140,
+										opacity: af.uploading ? 0.6 : 1,
+										background: "var(--color-bg-secondary)",
+									}}
+									onError={(e) => {
+										(e.currentTarget as HTMLImageElement).style.display = "none";
+									}}
+								/>
+							) : category === "pdf" && af.path ? (
+								/* PDF thumbnail via Quick Look */
+								<img
+									src={`/api/workspace/thumbnail?path=${encodeURIComponent(af.path)}&size=200`}
+									alt={af.name}
+									className="block rounded-xl object-cover"
+									style={{
+										height: 80,
+										width: "auto",
+										minWidth: 60,
+										maxWidth: 140,
+										opacity: af.uploading ? 0.6 : 1,
+										background: "var(--color-bg-secondary)",
+									}}
+									onError={(e) => {
+										(e.currentTarget as HTMLImageElement).style.display = "none";
+									}}
+								/>
 							) : (
-								<div className="flex items-center gap-2.5 px-3 py-2.5">
+								<div className="flex items-center gap-2.5 px-3 py-2.5" style={{ opacity: af.uploading ? 0.6 : 1 }}>
 									<div
-										className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+										className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
 										style={{
 											background: meta.bg,
 											color: meta.fg,
@@ -401,16 +424,16 @@ function AttachmentStrip({
 										<p
 											className="text-[11px] font-medium truncate"
 											style={{ color: "var(--color-text)" }}
-											title={af.path}
+											title={af.path || af.name}
 										>
 											{af.name}
 										</p>
 										<p
 											className="text-[9px] truncate"
 											style={{ color: "var(--color-text-muted)" }}
-											title={af.path}
+											title={af.path || af.name}
 										>
-											{short}
+											{af.uploading ? "Uploading..." : short}
 										</p>
 									</div>
 								</div>
@@ -1112,34 +1135,44 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		// Ref for handleNewSession so handleEditorSubmit doesn't depend on the hook order
 		const handleNewSessionRef = useRef<() => void>(() => {});
 
-		/** Submit from the Tiptap editor (called on Enter or send button). */
+		/** Submit from the Tiptap editor (called on Enter or send button).
+		 *  `overrideAttachments` is used by the queue system to pass saved attachments directly. */
 		const handleEditorSubmit = useCallback(
 			async (
 				text: string,
 				mentionedFiles: Array<{ name: string; path: string }>,
+				overrideAttachments?: AttachedFile[],
 			) => {
 				const hasText = text.trim().length > 0;
 				const hasMentions = mentionedFiles.length > 0;
-				const hasFiles = attachedFiles.length > 0;
+				// Use override attachments (from queue) or current state
+				const readyFiles = overrideAttachments
+					? overrideAttachments.filter((f) => !f.uploading && f.path)
+					: attachedFiles.filter((f) => !f.uploading && f.path);
+				const hasFiles = readyFiles.length > 0;
 				if (!hasText && !hasMentions && !hasFiles) {
 					return;
 				}
 
 				const userText = text.trim();
-				const currentAttachments = [...attachedFiles];
-
-				// Clear attachments
-				if (currentAttachments.length > 0) {
-					setAttachedFiles([]);
-				}
+				const currentAttachments = [...readyFiles];
 
 				if (userText.toLowerCase() === "/new") {
+					// Revoke blob URLs before clearing
+					for (const f of attachedFiles) {
+						if (f.localUrl) {URL.revokeObjectURL(f.localUrl);}
+					}
+					setAttachedFiles([]);
 					handleNewSessionRef.current();
 					return;
 				}
 
 				// Queue the message if the agent is still running.
 				if (isStreaming) {
+					// Clear attachment strip but keep blob URLs alive for queue thumbnails
+					if (!overrideAttachments) {
+						setAttachedFiles([]);
+					}
 					setQueuedMessages((prev) => [
 						...prev,
 						{
@@ -1151,6 +1184,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						},
 					]);
 					return;
+				}
+
+				// Clear attachments (revoke blob URLs to free memory)
+				if (!overrideAttachments && currentAttachments.length > 0) {
+					for (const f of attachedFiles) {
+						if (f.localUrl) {URL.revokeObjectURL(f.localUrl);}
+					}
+					setAttachedFiles([]);
 				}
 
 				let sessionId = currentSessionId;
@@ -1226,9 +1267,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			if (wasStreaming && isNowReady && queuedMessages.length > 0) {
 				const [next, ...rest] = queuedMessages;
 				setQueuedMessages(rest);
+				// Revoke blob URLs from queued attachments (no longer needed for thumbnails)
+				for (const f of next.attachedFiles) {
+					if (f.localUrl) {URL.revokeObjectURL(f.localUrl);}
+				}
 				// Use a microtask so React can settle the status update first.
 				queueMicrotask(() => {
-					void handleEditorSubmit(next.text, next.mentionedFiles);
+					void handleEditorSubmit(next.text, next.mentionedFiles, next.attachedFiles);
 				});
 			}
 		}, [status, queuedMessages, handleEditorSubmit]);
@@ -1413,7 +1458,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				await handleStop();
 				// Submit the message after a short delay to let status settle.
 				setTimeout(() => {
-					void handleEditorSubmit(msg.text, msg.mentionedFiles);
+					void handleEditorSubmit(msg.text, msg.mentionedFiles, msg.attachedFiles);
 				}, 100);
 			},
 			[queuedMessages, handleStop, handleEditorSubmit],
@@ -1439,41 +1484,71 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		);
 
 		const removeAttachment = useCallback((id: string) => {
-			setAttachedFiles((prev) =>
-				prev.filter((f) => f.id !== id),
-			);
+			setAttachedFiles((prev) => {
+				const removed = prev.find((f) => f.id === id);
+				if (removed?.localUrl) {URL.revokeObjectURL(removed.localUrl);}
+				return prev.filter((f) => f.id !== id);
+			});
 		}, []);
 
 		const clearAllAttachments = useCallback(() => {
-			setAttachedFiles([]);
+			setAttachedFiles((prev) => {
+				for (const f of prev) {
+					if (f.localUrl) {URL.revokeObjectURL(f.localUrl);}
+				}
+				return [];
+			});
 		}, []);
 
-		/** Upload native files (e.g. dropped from Finder/Desktop) and attach them. */
+		/** Upload native files (e.g. dropped from Finder/Desktop) and attach them.
+		 *  Shows files instantly with a local preview, then uploads in the background. */
 		const uploadAndAttachNativeFiles = useCallback(
-			async (files: FileList) => {
-				const uploaded: AttachedFile[] = [];
-				for (const file of Array.from(files)) {
-					try {
-						const form = new FormData();
-						form.append("file", file);
-						const res = await fetch("/api/workspace/upload", {
-							method: "POST",
-							body: form,
+			(files: FileList) => {
+				const fileArray = Array.from(files);
+
+				// Immediately add placeholder entries with local blob URLs
+				const placeholders: AttachedFile[] = fileArray.map((file) => ({
+					id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+					name: file.name,
+					path: "",
+					uploading: true,
+					localUrl: URL.createObjectURL(file),
+				}));
+				setAttachedFiles((prev) => [...prev, ...placeholders]);
+
+				// Upload each file in the background and update the entry
+				for (let i = 0; i < fileArray.length; i++) {
+					const file = fileArray[i];
+					const placeholderId = placeholders[i].id;
+					const localUrl = placeholders[i].localUrl;
+
+					const form = new FormData();
+					form.append("file", file);
+					fetch("/api/workspace/upload", {
+						method: "POST",
+						body: form,
+					})
+						.then((res) => res.ok ? res.json() : null)
+						.then((json: { ok?: boolean; path?: string } | null) => {
+							if (json?.ok && json.path) {
+								// Replace placeholder with the real uploaded file
+								setAttachedFiles((prev) =>
+									prev.map((f) =>
+										f.id === placeholderId
+											? { ...f, path: json.path!, uploading: false }
+											: f,
+									),
+								);
+							} else {
+								// Upload failed — remove the placeholder
+								setAttachedFiles((prev) => prev.filter((f) => f.id !== placeholderId));
+								if (localUrl) {URL.revokeObjectURL(localUrl);}
+							}
+						})
+						.catch(() => {
+							setAttachedFiles((prev) => prev.filter((f) => f.id !== placeholderId));
+							if (localUrl) {URL.revokeObjectURL(localUrl);}
 						});
-						if (!res.ok) { continue; }
-						const json = (await res.json()) as { ok?: boolean; path?: string };
-						if (!json.ok || !json.path) { continue; }
-						uploaded.push({
-							id: `${json.path}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-							name: file.name,
-							path: json.path,
-						});
-					} catch {
-						// skip files that fail to upload
-					}
-				}
-				if (uploaded.length > 0) {
-					setAttachedFiles((prev) => [...prev, ...uploaded]);
 				}
 			},
 			[],
@@ -1819,7 +1894,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							if (files && files.length > 0) {
 								e.preventDefault();
 								e.stopPropagation();
-								void uploadAndAttachNativeFiles(files);
+								 uploadAndAttachNativeFiles(files);
 							}
 						}}
 						>
@@ -1856,6 +1931,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							</div>
 						)}
 
+						{/* Attachment preview strip */}
+						<AttachmentStrip
+							files={attachedFiles}
+							compact={compact}
+							onRemove={removeAttachment}
+							onClearAll={
+								clearAllAttachments
+							}
+						/>
+
 							<ChatEditor
 								ref={editorRef}
 								onSubmit={handleEditorSubmit}
@@ -1876,16 +1961,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								disabled={loadingSession}
 								compact={compact}
 							/>
-
-						{/* Attachment preview strip */}
-						<AttachmentStrip
-							files={attachedFiles}
-							compact={compact}
-							onRemove={removeAttachment}
-							onClearAll={
-								clearAllAttachments
-							}
-						/>
 
 						{/* Toolbar row */}
 							<div

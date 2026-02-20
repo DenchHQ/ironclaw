@@ -259,6 +259,31 @@ export const ChatEditor = forwardRef<ChatEditorHandle, ChatEditorProps>(
 				// otherwise consume the event or insert the text/plain
 				// fallback data as raw text.
 				handleDOMEvents: {
+					paste: (_view, event) => {
+						const clipboardData = event.clipboardData;
+						if (!clipboardData) {return false;}
+
+						// Collect files from clipboard (images, screenshots, etc.)
+						const pastedFiles: File[] = [];
+						if (clipboardData.items) {
+							for (const item of Array.from(clipboardData.items)) {
+								if (item.kind === "file") {
+									const file = item.getAsFile();
+									if (file) {pastedFiles.push(file);}
+								}
+							}
+						}
+
+						if (pastedFiles.length > 0) {
+							event.preventDefault();
+							const dt = new DataTransfer();
+							for (const f of pastedFiles) {dt.items.add(f);}
+							nativeFileDropRef.current?.(dt.files);
+							return true;
+						}
+
+						return false;
+					},
 					dragover: (_view, event) => {
 						const de = event;
 						if (de.dataTransfer?.types.includes("application/x-file-mention")) {

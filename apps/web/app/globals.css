@@ -208,15 +208,9 @@ body {
   font-family: "Bookerly", Georgia, "Times New Roman", serif;
 }
 
-/* Message bubbles and assistant text: use body font so they render immediately (no FOUT). */
+/* Message bubbles and assistant text: use Bookerly for a polished reading experience. */
 .chat-message-font {
-  font-family:
-    "Inter",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
+  font-family: "Bookerly", Georgia, "Times New Roman", serif;
 }
 
 /* Smooth theme transitions */
@@ -907,13 +901,7 @@ a,
   line-height: 1.8;
   overflow-wrap: anywhere;
   word-break: break-word;
-  font-family:
-    "Inter",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
+  font-family: "Bookerly", Georgia, "Times New Roman", serif;
 }
 
 .chat-prose > *:first-child {
