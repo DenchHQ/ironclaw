@@ -22,10 +22,15 @@ function DropdownMenuPortal({
 }
 
 function DropdownMenuTrigger({
+	className,
 	...props
 }: React.ComponentProps<typeof MenuPrimitive.Trigger>) {
 	return (
-		<MenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />
+		<MenuPrimitive.Trigger
+			data-slot="dropdown-menu-trigger"
+			className={cn("cursor-pointer outline-none ring-0 border-none", className)}
+			{...props}
+		/>
 	);
 }
 
@@ -53,9 +58,8 @@ function DropdownMenuContent({
 				<MenuPrimitive.Popup
 					data-slot="dropdown-menu-content"
 					className={cn(
-						"min-w-32 rounded-lg p-1 shadow-md duration-100 overflow-x-hidden overflow-y-auto outline-none",
-						"bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)]",
-						"data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+						"bg-neutral-100/[0.67] border border-white backdrop-blur-md text-[var(--color-text)] z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-3xl p-1 shadow-[0_0_25px_0_rgba(0,0,0,0.16)] outline-none",
+						"data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
 						className,
 					)}
 					{...props}
@@ -85,8 +89,8 @@ function DropdownMenuLabel({
 			data-slot="dropdown-menu-label"
 			data-inset={inset}
 			className={cn(
-				"px-1.5 py-1 text-xs font-medium text-[var(--color-text-muted)]",
-				inset && "pl-7",
+				"px-2 py-1.5 text-sm font-medium",
+				inset && "pl-8",
 				className,
 			)}
 			{...props}
@@ -116,11 +120,10 @@ function DropdownMenuItem({
 			data-inset={inset}
 			data-variant={variant}
 			className={cn(
-				"gap-1.5 rounded-md px-1.5 py-1 text-sm relative flex cursor-default items-center outline-none select-none",
-				"focus:bg-[var(--color-surface-hover)] focus:text-[var(--color-text)]",
-				"data-[variant=destructive]:text-[var(--color-error)] data-[variant=destructive]:focus:bg-[var(--color-error)]/10 data-[variant=destructive]:focus:text-[var(--color-error)]",
-				inset && "pl-7",
-				"[&_svg]:pointer-events-none [&_svg]:shrink-0",
+				"bg-transparent hover:bg-neutral-400/15 text-sm transition-all relative flex cursor-pointer items-center gap-2 rounded-full px-2 py-1.5 outline-none ring-0 border-none select-none",
+				"data-[variant=destructive]:text-[var(--color-error)] data-[variant=destructive]:hover:bg-[var(--color-error)]/10 data-[variant=destructive]:hover:text-[var(--color-error)]",
+				inset && "pl-8",
+				"[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
 				"data-disabled:pointer-events-none data-disabled:opacity-50",
 				className,
 			)}
@@ -151,10 +154,9 @@ function DropdownMenuSubTrigger({
 			data-slot="dropdown-menu-sub-trigger"
 			data-inset={inset}
 			className={cn(
-				"focus:bg-[var(--color-surface-hover)] focus:text-[var(--color-text)] data-open:bg-[var(--color-surface-hover)] data-open:text-[var(--color-text)]",
-				"gap-1.5 rounded-md px-1.5 py-1 text-sm flex cursor-default items-center outline-none select-none",
-				inset && "pl-7",
-				"[&_svg]:pointer-events-none [&_svg]:shrink-0",
+				"bg-transparent hover:bg-neutral-400/15 focus:bg-neutral-400/15 data-open:bg-neutral-400/15 flex cursor-pointer items-center gap-2 rounded-full px-2 py-1.5 text-sm outline-none select-none transition-all focus:ring-0 focus:outline-none focus-visible:ring-0 focus-visible:outline-none",
+				inset && "pl-8",
+				"[&_svg:not([class*='text-'])]:text-[var(--color-text-muted)] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
 				className,
 			)}
 			{...props}
@@ -200,20 +202,16 @@ function DropdownMenuCheckboxItem({
 			data-slot="dropdown-menu-checkbox-item"
 			data-inset={inset}
 			className={cn(
-				"focus:bg-[var(--color-surface-hover)] focus:text-[var(--color-text)]",
-				"gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm relative flex cursor-default items-center outline-none select-none",
-				inset && "pl-7",
-				"[&_svg]:pointer-events-none [&_svg]:shrink-0",
+				"hover:bg-neutral-400/15 focus:bg-neutral-400/15 relative flex cursor-pointer items-center gap-2 rounded-full py-1.5 pr-2 pl-8 text-sm outline-none select-none transition-colors",
+				inset && "pl-8",
+				"[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
 				"data-disabled:pointer-events-none data-disabled:opacity-50",
 				className,
 			)}
 			checked={checked}
 			{...props}
 		>
-			<span
-				className="absolute right-2 flex items-center justify-center pointer-events-none"
-				data-slot="dropdown-menu-checkbox-item-indicator"
-			>
+			<span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
 				<MenuPrimitive.CheckboxItemIndicator>
 					<CheckIcon className="size-4" />
 				</MenuPrimitive.CheckboxItemIndicator>
@@ -247,19 +245,15 @@ function DropdownMenuRadioItem({
 			data-slot="dropdown-menu-radio-item"
 			data-inset={inset}
 			className={cn(
-				"focus:bg-[var(--color-surface-hover)] focus:text-[var(--color-text)]",
-				"gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm relative flex cursor-default items-center outline-none select-none",
-				inset && "pl-7",
-				"[&_svg]:pointer-events-none [&_svg]:shrink-0",
+				"hover:bg-neutral-400/15 focus:bg-neutral-400/15 relative flex cursor-pointer items-center gap-2 rounded-full py-1.5 pr-2 pl-8 text-sm outline-none select-none transition-colors",
+				inset && "pl-8",
+				"[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
 				"data-disabled:pointer-events-none data-disabled:opacity-50",
 				className,
 			)}
 			{...props}
 		>
-			<span
-				className="absolute right-2 flex items-center justify-center pointer-events-none"
-				data-slot="dropdown-menu-radio-item-indicator"
-			>
+			<span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
 				<MenuPrimitive.RadioItemIndicator>
 					<CheckIcon className="size-4" />
 				</MenuPrimitive.RadioItemIndicator>
@@ -277,7 +271,7 @@ function DropdownMenuSeparator({
 		<MenuPrimitive.Separator
 			data-slot="dropdown-menu-separator"
 			className={cn(
-				"bg-[var(--color-border)] -mx-1 my-1 h-px",
+				"bg-neutral-400/15 -mx-1 my-1 h-px",
 				className,
 			)}
 			{...props}

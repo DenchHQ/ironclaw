@@ -223,8 +223,8 @@ function ResizeHandle({
       role="separator"
       aria-orientation="vertical"
       onMouseDown={onMouseDown}
-      className={`shrink-0 w-1 cursor-col-resize flex justify-center transition-colors ${showHover ? "bg-blue-600/30" : "hover:bg-blue-600/30"}`}
-      style={{ minWidth: 4 }}
+      className={`cursor-col-resize flex justify-center transition-colors ${showHover ? "bg-blue-600/30" : "hover:bg-blue-600/30"}`}
+      style={{ position: "absolute", [mode === "left" ? "right" : "left"]: -2, top: 0, bottom: 0, width: 4, zIndex: 20 }}
     />
   );
 }
@@ -1253,7 +1253,7 @@ function WorkspacePageInner() {
     <div
       ref={layoutRef}
       className="flex h-screen"
-      style={{ background: "var(--color-bg)" }}
+      style={{ background: "var(--color-main-bg)" }}
       onClick={handleContainerClick}
     >
       {/* Left sidebar — static on desktop (resizable), drawer overlay on mobile */}
@@ -1283,9 +1283,16 @@ function WorkspacePageInner() {
       ) : (
         <>
           <div
-            className="flex shrink-0 flex-col"
+            className="flex shrink-0 flex-col relative"
             style={{ width: leftSidebarWidth, minWidth: leftSidebarWidth }}
           >
+            <ResizeHandle
+              mode="left"
+              containerRef={layoutRef}
+              min={LEFT_SIDEBAR_MIN}
+              max={LEFT_SIDEBAR_MAX}
+              onResize={setLeftSidebarWidth}
+            />
             <WorkspaceSidebar
               tree={enhancedTree}
               activePath={activePath}
@@ -1306,18 +1313,11 @@ function WorkspacePageInner() {
               width={leftSidebarWidth}
             />
           </div>
-          <ResizeHandle
-            mode="left"
-            containerRef={layoutRef}
-            min={LEFT_SIDEBAR_MIN}
-            max={LEFT_SIDEBAR_MAX}
-            onResize={setLeftSidebarWidth}
-          />
         </>
       )}
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ background: "var(--color-main-bg)" }}>
         {/* Mobile top bar — always visible on mobile */}
         {isMobile && (
           <div
@@ -1426,7 +1426,7 @@ function WorkspacePageInner() {
           {showMainChat ? (
             /* Main chat view (default when no file is selected) */
             <>
-              <div className="flex-1 flex flex-col min-w-0">
+              <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--color-main-bg)" }}>
                 {activeSubagent ? (
                   <SubagentPanel
                     sessionKey={activeSubagent.childSessionKey}
@@ -1483,17 +1483,17 @@ function WorkspacePageInner() {
                 )
               ) : (
                 <>
-                  <ResizeHandle
-                    mode="right"
-                    containerRef={layoutRef}
-                    min={RIGHT_SIDEBAR_MIN}
-                    max={RIGHT_SIDEBAR_MAX}
-                    onResize={setRightSidebarWidth}
-                  />
                   <div
-                    className="flex shrink-0 flex-col"
-                    style={{ width: rightSidebarWidth, minWidth: rightSidebarWidth }}
+                    className="flex shrink-0 flex-col relative"
+                    style={{ width: rightSidebarWidth, minWidth: rightSidebarWidth, background: "var(--color-sidebar-bg)" }}
                   >
+                    <ResizeHandle
+                      mode="right"
+                      containerRef={layoutRef}
+                      min={RIGHT_SIDEBAR_MIN}
+                      max={RIGHT_SIDEBAR_MAX}
+                      onResize={setRightSidebarWidth}
+                    />
                     {chatSidebarPreview ? (
                       <ChatSidebarPreview
                         preview={chatSidebarPreview}
@@ -1556,21 +1556,21 @@ function WorkspacePageInner() {
               {/* Chat sidebar (file/folder-scoped) — hidden for reserved paths, hidden on mobile */}
               {!isMobile && fileContext && showChatSidebar && (
                 <>
-                  <ResizeHandle
-                    mode="right"
-                    containerRef={layoutRef}
-                    min={RIGHT_SIDEBAR_MIN}
-                    max={RIGHT_SIDEBAR_MAX}
-                    onResize={setRightSidebarWidth}
-                  />
                   <aside
-                    className="flex-shrink-0 border-l flex flex-col"
+                    className="flex-shrink-0 border-l flex flex-col relative"
                     style={{
                       width: rightSidebarWidth,
                       borderColor: "var(--color-border)",
                       background: "var(--color-bg)",
                     }}
                   >
+                    <ResizeHandle
+                      mode="right"
+                      containerRef={layoutRef}
+                      min={RIGHT_SIDEBAR_MIN}
+                      max={RIGHT_SIDEBAR_MAX}
+                      onResize={setRightSidebarWidth}
+                    />
                     <ChatPanel
                       ref={compactChatRef}
                       compact

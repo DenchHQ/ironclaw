@@ -155,6 +155,131 @@ function FileTypeIcon({ category }: { category: string }) {
 	}
 }
 
+function QueueItem({
+	msg,
+	idx,
+	onEdit,
+	onSendNow,
+	onRemove,
+}: {
+	msg: QueuedMessage;
+	idx: number;
+	onEdit: (id: string, text: string) => void;
+	onSendNow: (id: string) => void;
+	onRemove: (id: string) => void;
+}) {
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState(msg.text);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
+
+	const autoResize = () => {
+		const el = inputRef.current;
+		if (!el) {return;}
+		el.style.height = "auto";
+		el.style.height = `${el.scrollHeight}px`;
+	};
+
+	useEffect(() => {
+		if (editing) {
+			inputRef.current?.focus();
+			const len = inputRef.current?.value.length ?? 0;
+			inputRef.current?.setSelectionRange(len, len);
+			autoResize();
+		}
+	}, [editing]);
+
+	const commitEdit = () => {
+		const trimmed = draft.trim();
+		if (trimmed && trimmed !== msg.text) {
+			onEdit(msg.id, trimmed);
+		} else {
+			setDraft(msg.text);
+		}
+		setEditing(false);
+	};
+
+	return (
+		<div
+			className={`flex items-start gap-2.5 group py-2 ${idx > 0 ? "border-t" : ""}`}
+			style={idx > 0 ? { borderColor: "var(--color-border)" } : undefined}
+		>
+			<span
+				className="shrink-0 mt-px text-[11px] font-medium tabular-nums w-4"
+				style={{ color: "var(--color-text-muted)" }}
+			>
+				{idx + 1}
+			</span>
+			{editing ? (
+				<textarea
+					ref={inputRef}
+					className="flex-1 text-[13px] leading-[1.45] min-w-0 resize-none rounded-md px-2 py-1 outline-none"
+					style={{
+						color: "var(--color-text-secondary)",
+						background: "var(--color-bg)",
+						border: "1px solid var(--color-border)",
+					}}
+					rows={1}
+					value={draft}
+					onChange={(e) => { setDraft(e.target.value); autoResize(); }}
+					onBlur={commitEdit}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(); }
+						if (e.key === "Escape") { setDraft(msg.text); setEditing(false); }
+					}}
+				/>
+			) : (
+				<p
+					className="flex-1 text-[13px] leading-[1.45] line-clamp-2 min-w-0"
+					style={{ color: "var(--color-text-secondary)", whiteSpace: "pre-wrap" }}
+				>
+					{msg.text || (msg.attachedFiles.length > 0 ? `${msg.attachedFiles.length} file(s)` : "")}
+				</p>
+			)}
+			{!editing && (
+				<div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+					{/* Edit */}
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Edit message"
+						onClick={() => { setDraft(msg.text); setEditing(true); }}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+							<path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
+						</svg>
+					</button>
+					{/* Send now */}
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Send now"
+						onClick={() => onSendNow(msg.id)}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M12 19V5" />
+							<path d="m5 12 7-7 7 7" />
+						</svg>
+					</button>
+					{/* Delete */}
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Remove from queue"
+						onClick={() => onRemove(msg.id)}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M3 6h18" />
+							<path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+							<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+						</svg>
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
 function AttachmentStrip({
 	files,
 	compact,
@@ -1272,6 +1397,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
 		}, []);
 
+		const updateQueuedMessageText = useCallback((id: string, text: string) => {
+			setQueuedMessages((prev) => prev.map((m) => m.id === id ? { ...m, text } : m));
+		}, []);
+
 		/** Force-send: stop the agent, then immediately submit this queued message. */
 		const forceSendQueuedMessage = useCallback(
 			async (id: string) => {
@@ -1361,13 +1490,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		return (
 			<div
-				ref={scrollContainerRef}
-				className="h-full overflow-y-auto [scrollbar-gutter:stable]"
+				className="h-full flex flex-col"
+				style={{ background: "var(--color-main-bg)" }}
 			>
-				<div className="flex flex-col min-h-full">
 				{/* Header — sticky glass bar */}
 				<header
-					className={`${compact ? "px-3 py-2" : "px-3 py-2 md:px-6 md:py-3"} flex items-center justify-between sticky top-0 z-20 backdrop-blur-md`}
+					className={`${compact ? "px-3 py-2" : "px-3 py-2 md:px-6 md:py-3"} flex items-center justify-between z-20`}
 					style={{
 						background: "var(--color-bg-glass)",
 					}}
@@ -1424,6 +1552,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 										variant="destructive"
 										onSelect={() => onDeleteSession(currentSessionId)}
 									>
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
 										Delete
 									</DropdownMenuItem>
 								</DropdownMenuContent>
@@ -1460,7 +1589,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				{/* File-scoped session tabs (compact mode) */}
 				{compact && fileContext && fileSessions.length > 0 && (
 					<div
-						className="px-2 py-1.5 border-b flex gap-1 overflow-x-auto sticky top-[41px] z-20 backdrop-blur-md"
+						className="px-2 py-1.5 border-b flex gap-1 overflow-x-auto z-20"
 						style={{
 							borderColor: "var(--color-border)",
 							background: "var(--color-bg-glass)",
@@ -1497,9 +1626,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					</div>
 				)}
 
+				<div
+					ref={scrollContainerRef}
+					className="flex-1 overflow-y-auto min-h-0"
+				>
 				{/* Messages */}
 				<div
-					className={`flex-1 ${compact ? "px-3" : "px-6"}`}
+					className={`${compact ? "px-3" : "px-6"}`}
 				>
 					{loadingSession ? (
 						<div className="flex items-center justify-center h-full min-h-[60vh]">
@@ -1620,10 +1753,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						<p className="text-xs">{error.message}</p>
 					</div>
 				)}
+				</div>
 
-				{/* Input — sticky glass bar at bottom */}
+				{/* Input bar at bottom */}
 				<div
-					className={`${compact ? "px-3 py-2" : "px-3 pb-3 pt-0 md:px-6 md:pb-5"} sticky bottom-0 z-20 backdrop-blur-md`}
+					className={`${compact ? "px-3 py-2" : "px-3 pb-3 pt-0 md:px-6 md:pb-5"} z-20`}
 					style={{ background: "var(--color-bg-glass)" }}
 				>
 					<div
@@ -1700,47 +1834,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 									</div>
 									<div className="flex flex-col p-2">
 										{queuedMessages.map((msg, idx) => (
-											<div
+											<QueueItem
 												key={msg.id}
-												className={`flex items-start gap-2.5 group py-2 ${idx > 0 ? "border-t" : ""}`}
-												style={idx > 0 ? { borderColor: "var(--color-border)" } : undefined}
-											>
-												<span
-													className="shrink-0 mt-px text-[11px] font-medium tabular-nums w-4"
-													style={{ color: "var(--color-text-muted)" }}
-												>
-													{idx + 1}
-												</span>
-												<p
-													className="flex-1 text-[13px] leading-[1.45] line-clamp-2 min-w-0"
-													style={{ color: "var(--color-text-secondary)", whiteSpace: "pre-wrap" }}
-												>
-													{msg.text || (msg.attachedFiles.length > 0 ? `${msg.attachedFiles.length} file(s)` : "")}
-												</p>
-												<div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-													<button
-														type="button"
-														className="rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-														style={{ color: "var(--color-accent)", background: "var(--color-accent-light)" }}
-														title="Stop agent and send this message now"
-														onClick={() => forceSendQueuedMessage(msg.id)}
-													>
-														Send now
-													</button>
-													<button
-														type="button"
-														className="rounded-md p-0.5 transition-colors hover:opacity-80"
-														style={{ color: "var(--color-text-muted)" }}
-														title="Remove from queue"
-														onClick={() => removeQueuedMessage(msg.id)}
-													>
-														<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-															<path d="M18 6 6 18" />
-															<path d="m6 6 12 12" />
-														</svg>
-													</button>
-												</div>
-											</div>
+												msg={msg}
+												idx={idx}
+												onEdit={updateQueuedMessageText}
+												onSendNow={forceSendQueuedMessage}
+												onRemove={removeQueuedMessage}
+											/>
 										))}
 									</div>
 								</div>
@@ -1814,9 +1915,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 										</svg>
 									</button>
 								</div>
-							{/* Send / Stop button (single button, toggles role) */}
+							{/* Send / Stop / Queue buttons */}
 							<div className="flex items-center gap-1.5">
-								{isStreaming ? (
+								{isStreaming && (
 									<button
 										type="button"
 										onClick={() => handleStop()}
@@ -1835,6 +1936,37 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 										>
 											<rect width="10" height="10" rx="1.5" />
 										</svg>
+									</button>
+								)}
+								{isStreaming ? (
+									<button
+										type="button"
+										onClick={() => {
+											editorRef.current?.submit();
+										}}
+										disabled={
+											(editorEmpty &&
+												attachedFiles.length === 0) ||
+											loadingSession
+										}
+										className="h-7 px-3 rounded-full flex items-center gap-1.5 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+										style={{
+											background:
+												!editorEmpty || attachedFiles.length > 0
+													? "var(--color-accent)"
+													: "var(--color-surface-hover)",
+											color:
+												!editorEmpty || attachedFiles.length > 0
+													? "white"
+													: "var(--color-text-muted)",
+										}}
+										title="Add to queue"
+									>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+											<polyline points="9 10 4 15 9 20" />
+											<path d="M20 4v7a4 4 0 0 1-4 4H4" />
+										</svg>
+										Queue
 									</button>
 								) : (
 									<button
@@ -1880,7 +2012,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							</div>
 						</div>
 					</div>
-				</div>
 				</div>
 
 				{/* File picker modal */}
