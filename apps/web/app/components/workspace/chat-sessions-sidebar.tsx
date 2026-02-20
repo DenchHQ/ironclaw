@@ -51,6 +51,8 @@ type ChatSessionsSidebarProps = {
 	onDeleteSession?: (sessionId: string) => void;
 	/** Called when the user renames a session from the sidebar menu. */
 	onRenameSession?: (sessionId: string, newTitle: string) => void;
+	/** Called when the user clicks the collapse/hide sidebar button. */
+	onCollapse?: () => void;
 	/** When true, show a loader instead of empty state (e.g. initial sessions fetch). */
 	loading?: boolean;
 };
@@ -157,6 +159,7 @@ export function ChatSessionsSidebar({
 	onSelectSubagent,
 	onDeleteSession,
 	onRenameSession,
+	onCollapse,
 	mobile,
 	onClose,
 	width: widthProp,
@@ -459,7 +462,21 @@ export function ChatSessionsSidebar({
 					background: "color-mix(in srgb, var(--color-sidebar-bg) 80%, transparent)",
 				}}
 			>
-				<div className="min-w-0 flex-1">
+				<div className="min-w-0 flex-1 flex items-center gap-1.5">
+					{onCollapse && (
+						<button
+							type="button"
+							onClick={onCollapse}
+							className="p-1 rounded-md shrink-0 transition-colors hover:bg-black/5"
+							style={{ color: "var(--color-text-muted)" }}
+							title="Hide chat sidebar (⌘⇧B)"
+						>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<rect width="18" height="18" x="3" y="3" rx="2" />
+								<path d="M15 3v18" />
+							</svg>
+						</button>
+					)}
 					<span
 						className="text-xs font-medium truncate block"
 						style={{ color: "var(--color-text)" }}

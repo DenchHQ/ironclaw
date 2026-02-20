@@ -113,7 +113,7 @@
   /* Glassmorphism */
   --color-glass: rgba(22, 22, 21, 0.72);
   --color-glass-border: rgba(255, 255, 255, 0.06);
-  --color-bg-glass: rgba(12, 12, 11, 0.8);
+  --color-bg-glass: rgba(22, 22, 21, 0.8);
 
   /* Object type chips */
   --color-chip-object: rgba(59, 130, 246, 0.12);

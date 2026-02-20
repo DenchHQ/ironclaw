@@ -566,7 +566,7 @@ function groupToolSteps(tools: ToolPart[]): VisualItem[] {
 /* ─── Main component ─── */
 
 export function ChainOfThought({ parts, isStreaming }: { parts: ChainPart[]; isStreaming?: boolean }) {
-	const [isOpen, setIsOpen] = useState(true);
+	const [isOpen, setIsOpen] = useState(!!isStreaming);
 
 	const isActive = parts.some(
 		(p) =>

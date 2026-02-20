@@ -46,6 +46,8 @@ type WorkspaceSidebarProps = {
 	width?: number;
 	/** Called after the user switches to a different profile. */
 	onProfileSwitch?: () => void;
+	/** Called when the user clicks the collapse/hide sidebar button. */
+	onCollapse?: () => void;
 };
 
 function HomeIcon() {
@@ -403,6 +405,7 @@ export function WorkspaceSidebar({
 	activeProfile,
 	onProfileSwitch,
 	width: widthProp,
+	onCollapse,
 }: WorkspaceSidebarProps) {
 	const isBrowsing = browseDir != null;
 	const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
@@ -524,6 +527,20 @@ export function WorkspaceSidebar({
 							)}
 						/>
 					</>
+				)}
+				{onCollapse && (
+					<button
+						type="button"
+						onClick={onCollapse}
+						className="p-1 rounded-md shrink-0 transition-colors hover:bg-stone-200 dark:hover:bg-stone-700"
+						style={{ color: "var(--color-text-muted)" }}
+						title="Hide sidebar (⌘B)"
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+							<rect width="18" height="18" x="3" y="3" rx="2" />
+							<path d="M9 3v18" />
+						</svg>
+					</button>
 				)}
 			</div>
 

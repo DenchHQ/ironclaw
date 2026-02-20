@@ -429,6 +429,10 @@ function WorkspacePageInner() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatSessionsOpen, setChatSessionsOpen] = useState(false);
 
+  // Sidebar collapse state (desktop only).
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+
   // Resizable sidebar widths (desktop only; persisted in localStorage).
   // Use static defaults so server and client match on first render (avoid hydration mismatch).
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(260);
@@ -451,6 +455,22 @@ function WorkspacePageInner() {
   useEffect(() => {
     window.localStorage.setItem(STORAGE_RIGHT, String(rightSidebarWidth));
   }, [rightSidebarWidth]);
+
+  // Keyboard shortcuts: Cmd+B = toggle left sidebar, Cmd+Shift+B = toggle right sidebar
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          setRightSidebarCollapsed((v) => !v);
+        } else {
+          setLeftSidebarCollapsed((v) => !v);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Derive file context for chat sidebar directly from activePath (stable across loading).
   // Exclude reserved virtual paths (~chats, ~cron, etc.) where file-scoped chat is irrelevant.
@@ -1294,6 +1314,7 @@ function WorkspacePageInner() {
         )
       ) : (
         <>
+          {!leftSidebarCollapsed && (
           <div
             className="flex shrink-0 flex-col relative"
             style={{ width: leftSidebarWidth, minWidth: leftSidebarWidth }}
@@ -1323,9 +1344,29 @@ function WorkspacePageInner() {
               activeProfile={activeProfile}
               onProfileSwitch={handleProfileSwitch}
               width={leftSidebarWidth}
+              onCollapse={() => setLeftSidebarCollapsed(true)}
             />
           </div>
+          )}
         </>
+      )}
+
+      {/* Expand left sidebar button (shown when collapsed) */}
+      {!isMobile && leftSidebarCollapsed && (
+        <div className="shrink-0 flex flex-col items-center pt-2.5 px-1.5">
+          <button
+            type="button"
+            onClick={() => setLeftSidebarCollapsed(false)}
+            className="p-1.5 rounded-md transition-colors hover:bg-black/5"
+            style={{ color: "var(--color-text-muted)" }}
+            title="Show sidebar (⌘B)"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+            </svg>
+          </button>
+        </div>
       )}
 
       {/* Main content */}
@@ -1497,6 +1538,7 @@ function WorkspacePageInner() {
                 )
               ) : (
                 <>
+                  {!rightSidebarCollapsed && (
                   <div
                     className="flex shrink-0 flex-col relative"
                     style={{ width: rightSidebarWidth, minWidth: rightSidebarWidth, background: "var(--color-sidebar-bg)" }}
@@ -1536,10 +1578,28 @@ function WorkspacePageInner() {
                         onSelectSubagent={handleSelectSubagent}
                         onDeleteSession={handleDeleteSession}
                         onRenameSession={handleRenameSession}
+                        onCollapse={() => setRightSidebarCollapsed(true)}
                         width={rightSidebarWidth}
                       />
                     )}
                   </div>
+                  )}
+                  {rightSidebarCollapsed && (
+                    <div className="shrink-0 flex flex-col items-center pt-2.5 px-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setRightSidebarCollapsed(false)}
+                        className="p-1.5 rounded-md transition-colors hover:bg-black/5"
+                        style={{ color: "var(--color-text-muted)" }}
+                        title="Show chat sidebar (⌘⇧B)"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect width="18" height="18" x="3" y="3" rx="2" />
+                          <path d="M15 3v18" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </>
@@ -1569,7 +1629,7 @@ function WorkspacePageInner() {
               </div>
 
               {/* Chat sidebar (file/folder-scoped) — hidden for reserved paths, hidden on mobile */}
-              {!isMobile && fileContext && showChatSidebar && (
+              {!isMobile && fileContext && showChatSidebar && !rightSidebarCollapsed && (
                 <>
                   <aside
                     className="flex-shrink-0 border-l flex flex-col relative"
