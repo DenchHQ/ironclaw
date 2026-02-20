@@ -15,7 +15,7 @@ let listeners = new Set<Listener>();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sharedWatcher: any = null;
 let sharedRoot: string | null = null;
-let watcherReady = false;
+let __watcherReady = false;
 
 async function ensureWatcher(root: string) {
   if (sharedWatcher && sharedRoot === root) {return;}
@@ -25,7 +25,7 @@ async function ensureWatcher(root: string) {
     await sharedWatcher.close();
     sharedWatcher = null;
     sharedRoot = null;
-    watcherReady = false;
+    _watcherReady = false;
   }
 
   try {
@@ -54,7 +54,7 @@ async function ensureWatcher(root: string) {
       for (const fn of listeners) {fn(eventType, rel);}
     });
 
-    sharedWatcher.once("ready", () => {watcherReady = true;});
+    sharedWatcher.once("ready", () => {_watcherReady = true;});
 
     sharedWatcher.on("error", () => {
       // Swallow; polling mode shouldn't hit EMFILE but be safe.
@@ -69,7 +69,7 @@ function stopWatcherIfIdle() {
   sharedWatcher.close();
   sharedWatcher = null;
   sharedRoot = null;
-  watcherReady = false;
+  _watcherReady = false;
 }
 
 /**
