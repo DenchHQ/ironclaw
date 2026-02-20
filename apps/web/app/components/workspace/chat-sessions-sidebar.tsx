@@ -49,6 +49,8 @@ type ChatSessionsSidebarProps = {
 	width?: number;
 	/** Called when the user deletes a session from the sidebar menu. */
 	onDeleteSession?: (sessionId: string) => void;
+	/** Called when the user renames a session from the sidebar menu. */
+	onRenameSession?: (sessionId: string, newTitle: string) => void;
 	/** When true, show a loader instead of empty state (e.g. initial sessions fetch). */
 	loading?: boolean;
 };
@@ -154,12 +156,15 @@ export function ChatSessionsSidebar({
 	onNewSession,
 	onSelectSubagent,
 	onDeleteSession,
+	onRenameSession,
 	mobile,
 	onClose,
 	width: widthProp,
 	loading = false,
 }: ChatSessionsSidebarProps) {
 	const [hoveredId, setHoveredId] = useState<string | null>(null);
+	const [renamingId, setRenamingId] = useState<string | null>(null);
+	const [renameValue, setRenameValue] = useState("");
 
 	const handleSelect = useCallback(
 		(id: string) => {
@@ -183,6 +188,19 @@ export function ChatSessionsSidebar({
 		},
 		[onDeleteSession],
 	);
+
+	const handleStartRename = useCallback((sessionId: string, currentTitle: string) => {
+		setRenamingId(sessionId);
+		setRenameValue(currentTitle || "");
+	}, []);
+
+	const handleCommitRename = useCallback(() => {
+		if (renamingId && renameValue.trim()) {
+			onRenameSession?.(renamingId, renameValue.trim());
+		}
+		setRenamingId(null);
+		setRenameValue("");
+	}, [renamingId, renameValue, onRenameSession]);
 
 	// Index subagents by parent session ID
 	const subagentsByParent = useMemo(() => {
@@ -288,6 +306,23 @@ export function ChatSessionsSidebar({
 													: "transparent",
 										}}
 									>
+										{renamingId === session.id ? (
+											<form
+												className="flex-1 min-w-0 px-2 py-1.5"
+												onSubmit={(e) => { e.preventDefault(); handleCommitRename(); }}
+											>
+												<input
+													type="text"
+													value={renameValue}
+													onChange={(e) => setRenameValue(e.target.value)}
+													onBlur={handleCommitRename}
+													onKeyDown={(e) => { if (e.key === "Escape") { setRenamingId(null); setRenameValue(""); } }}
+													autoFocus
+													className="w-full text-xs font-medium px-1 py-0.5 rounded outline-none border"
+													style={{ color: "var(--color-text)", background: "var(--color-surface)", borderColor: "var(--color-border)" }}
+												/>
+											</form>
+										) : (
 										<button
 											type="button"
 											onClick={() => handleSelect(session.id)}
@@ -313,7 +348,7 @@ export function ChatSessionsSidebar({
 												</div>
 											</div>
 											<div className="flex items-center gap-2 mt-0.5" style={{ paddingLeft: isStreamingSession ? "calc(0.375rem + 6px)" : undefined }}>
-												
+
 												<span
 													className="text-[10px]"
 													style={{ color: "var(--color-text-muted)" }}
@@ -330,6 +365,7 @@ export function ChatSessionsSidebar({
 												)}
 											</div>
 										</button>
+										)}
 										{onDeleteSession && (
 											<div className={`shrink-0 flex items-center pr-1 transition-opacity ${showMore ? "opacity-100" : "opacity-0"}`}>
 												<DropdownMenu>
@@ -343,6 +379,12 @@ export function ChatSessionsSidebar({
 														<MoreHorizontalIcon />
 													</DropdownMenuTrigger>
 													<DropdownMenuContent align="end" side="bottom">
+														<DropdownMenuItem
+															onSelect={() => handleStartRename(session.id, session.title)}
+														>
+															<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /></svg>
+															Rename
+														</DropdownMenuItem>
 														<DropdownMenuItem
 															variant="destructive"
 															onSelect={() => handleDeleteSession(session.id)}

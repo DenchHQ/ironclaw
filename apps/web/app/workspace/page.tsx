@@ -533,6 +533,18 @@ function WorkspacePageInner() {
     [activeSessionId, sessions, fetchSessions],
   );
 
+  const handleRenameSession = useCallback(
+    async (sessionId: string, newTitle: string) => {
+      await fetch(`/api/web-sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      void fetchSessions();
+    },
+    [fetchSessions],
+  );
+
   // Poll for active (streaming) agent runs so the sidebar can show indicators.
   useEffect(() => {
     let cancelled = false;
@@ -1448,6 +1460,7 @@ function WorkspacePageInner() {
                   onSubagentClick={handleSubagentClickFromChat}
                   onFilePathClick={handleFilePathClickFromChat}
                   onDeleteSession={handleDeleteSession}
+                  onRenameSession={handleRenameSession}
                   compact={isMobile}
                 />
                 )}
@@ -1477,6 +1490,7 @@ function WorkspacePageInner() {
                     }}
                     onSelectSubagent={handleSelectSubagent}
                     onDeleteSession={handleDeleteSession}
+                    onRenameSession={handleRenameSession}
                     mobile
                     onClose={() => setChatSessionsOpen(false)}
                   />
@@ -1521,6 +1535,7 @@ function WorkspacePageInner() {
                         }}
                         onSelectSubagent={handleSelectSubagent}
                         onDeleteSession={handleDeleteSession}
+                        onRenameSession={handleRenameSession}
                         width={rightSidebarWidth}
                       />
                     )}
