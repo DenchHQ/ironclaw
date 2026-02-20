@@ -6,7 +6,7 @@
  *
  * Events are fed from the gateway WebSocket connection (gateway-events.ts).
  */
-import { existsSync, readFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	extractToolResult,
@@ -15,7 +15,7 @@ import {
 	parseErrorBody,
 } from "./agent-runner";
 import { subscribeToSessionKey, type GatewayEvent } from "./gateway-events";
-import { resolveOpenClawStateDir } from "./workspace";
+import { resolveOpenClawStateDir, resolveWebChatDir } from "./workspace";
 
 // ── Types ──
 
@@ -84,7 +84,13 @@ function getRegistry(): SubagentRegistry {
 
 // ── Event persistence ──
 
+/** Profile-scoped directory for subagent event JSONL files. */
 function subagentEventsDir(): string {
+	return join(resolveWebChatDir(), "subagent-events");
+}
+
+/** Pre-profile-scoping legacy path — used as a read fallback for migration. */
+function legacySubagentEventsDir(): string {
 	return join(resolveOpenClawStateDir(), "web-chat", "subagent-events");
 }
 
@@ -102,8 +108,18 @@ function persistEvent(sessionKey: string, event: SseEvent): void {
 }
 
 function loadPersistedEvents(sessionKey: string): SseEvent[] {
-	const filePath = join(subagentEventsDir(), safeFilename(sessionKey));
-	if (!existsSync(filePath)) {return [];}
+	const fname = safeFilename(sessionKey);
+
+	// Try profile-scoped dir first, fall back to legacy shared dir.
+	let filePath = join(subagentEventsDir(), fname);
+	if (!existsSync(filePath)) {
+		const legacyPath = join(legacySubagentEventsDir(), fname);
+		if (existsSync(legacyPath)) {
+			filePath = legacyPath;
+		} else {
+			return [];
+		}
+	}
 
 	try {
 		const lines = readFileSync(filePath, "utf-8").split("\n");
@@ -116,8 +132,50 @@ function loadPersistedEvents(sessionKey: string): SseEvent[] {
 	} catch { return []; }
 }
 
+// ── Profile-scoped subagent index ──
+
+type SubagentIndexEntry = {
+	runId: string;
+	parentWebSessionId: string;
+	task: string;
+	label?: string;
+	status: "running" | "completed" | "error";
+	startedAt: number;
+	endedAt?: number;
+};
+
+function subagentIndexPath(): string {
+	return join(resolveWebChatDir(), "subagent-index.json");
+}
+
+function loadSubagentIndex(): Record<string, SubagentIndexEntry> {
+	const p = subagentIndexPath();
+	if (!existsSync(p)) {return {};}
+	try {
+		return JSON.parse(readFileSync(p, "utf-8")) as Record<string, SubagentIndexEntry>;
+	} catch { return {}; }
+}
+
+function upsertSubagentIndex(sessionKey: string, entry: SubagentIndexEntry): void {
+	try {
+		const dir = resolveWebChatDir();
+		mkdirSync(dir, { recursive: true });
+		const index = loadSubagentIndex();
+		index[sessionKey] = entry;
+		writeFileSync(subagentIndexPath(), JSON.stringify(index, null, 2));
+	} catch { /* best-effort */ }
+}
+
 /** Read the on-disk registry entry and derive the proper status. */
 function readDiskStatus(sessionKey: string): "running" | "completed" | "error" {
+	// Check profile-scoped index first.
+	const profileIndex = loadSubagentIndex();
+	const profileEntry = profileIndex[sessionKey];
+	if (profileEntry) {
+		return profileEntry.status;
+	}
+
+	// Fall back to the shared gateway registry.
 	const registryPath = join(resolveOpenClawStateDir(), "subagents", "runs.json");
 	if (!existsSync(registryPath)) {return "running";}
 	try {
@@ -187,6 +245,17 @@ export function registerSubagent(
 		reg.parentIndex.set(parentWebSessionId, keys);
 	}
 	keys.add(info.sessionKey);
+
+	// Persist to the profile-scoped subagent index.
+	upsertSubagentIndex(info.sessionKey, {
+		runId: info.runId,
+		parentWebSessionId,
+		task: info.task,
+		label: info.label,
+		status: run.status,
+		startedAt: run.startedAt,
+		endedAt: run.endedAt,
+	});
 
 	// NOTE: We do NOT subscribe to gateway WebSocket here. During live
 	// streaming, events arrive via routeRawEvent() from the parent's NDJSON
@@ -352,9 +421,10 @@ export function routeRawEvent(
 }
 
 /**
- * Lazily register a subagent by reading the on-disk registry
- * (~/.openclaw/subagents/runs.json).  Returns true if the subagent was
- * found and registered (or was already registered).
+ * Lazily register a subagent by reading the on-disk registries.
+ * Checks the profile-scoped subagent-index.json first, then falls back
+ * to the shared gateway registry (~/.openclaw/subagents/runs.json).
+ * Returns true if the subagent was found and registered (or already registered).
  */
 export function ensureRegisteredFromDisk(
 	sessionKey: string,
@@ -362,6 +432,20 @@ export function ensureRegisteredFromDisk(
 ): boolean {
 	if (getRegistry().runs.has(sessionKey)) {return true;}
 
+	// 1. Check profile-scoped index.
+	const profileIndex = loadSubagentIndex();
+	const profileEntry = profileIndex[sessionKey];
+	if (profileEntry) {
+		registerSubagent(profileEntry.parentWebSessionId || parentWebSessionId, {
+			sessionKey,
+			runId: profileEntry.runId,
+			task: profileEntry.task,
+			label: profileEntry.label,
+		}, { fromDisk: true });
+		return true;
+	}
+
+	// 2. Fall back to the shared gateway registry.
 	const registryPath = join(resolveOpenClawStateDir(), "subagents", "runs.json");
 	if (!existsSync(registryPath)) {return false;}
 
@@ -571,6 +655,17 @@ function finalizeRun(run: SubagentRun, status: "completed" | "error"): void {
 
 	run.status = status;
 	run.endedAt = Date.now();
+
+	// Update the profile-scoped subagent index with final status.
+	upsertSubagentIndex(run.sessionKey, {
+		runId: run.runId,
+		parentWebSessionId: run.parentWebSessionId,
+		task: run.task,
+		label: run.label,
+		status: run.status,
+		startedAt: run.startedAt,
+		endedAt: run.endedAt,
+	});
 
 	// Signal completion to all subscribers
 	for (const sub of run.subscribers) {
