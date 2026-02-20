@@ -15,7 +15,8 @@ set -euo pipefail
 #   DMG_APP_POS            default: "125 160"
 #   DMG_APPS_POS           default: "375 160"
 #   SKIP_DMG_STYLE=1       skip Finder styling
-#   DMG_EXTRA_SECTORS      extra sectors to keep when shrinking RW image (default: 2048)
+#   DMG_EXTRA_SECTORS      extra sectors to keep when shrinking RW image (default: 409600 ≈ 200 MB)
+#                          Use a smaller value (e.g. 2048) for non-bundled builds without Node/webapp.
 
 APP_PATH="${1:-}"
 OUT_PATH="${2:-}"
@@ -45,7 +46,7 @@ DMG_WINDOW_BOUNDS="${DMG_WINDOW_BOUNDS:-400 100 900 420}"
 DMG_ICON_SIZE="${DMG_ICON_SIZE:-128}"
 DMG_APP_POS="${DMG_APP_POS:-125 160}"
 DMG_APPS_POS="${DMG_APPS_POS:-375 160}"
-DMG_EXTRA_SECTORS="${DMG_EXTRA_SECTORS:-2048}"
+DMG_EXTRA_SECTORS="${DMG_EXTRA_SECTORS:-409600}"
 
 to_applescript_list4() {
   local raw="$1"

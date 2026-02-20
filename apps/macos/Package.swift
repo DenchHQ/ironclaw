@@ -22,6 +22,7 @@ let package = Package(
         .package(url: "https://github.com/steipete/Peekaboo.git", branch: "main"),
         .package(path: "../shared/OpenClawKit"),
         .package(path: "../../Swabble"),
+        .package(path: "vendor/swiftui-math"),
     ],
     targets: [
         .target(

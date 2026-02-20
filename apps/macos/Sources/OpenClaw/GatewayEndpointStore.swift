@@ -1,5 +1,5 @@
-import ConcurrencyExtras
 import Foundation
+import os
 import OSLog
 
 enum GatewayEndpointState: Sendable, Equatable {
@@ -29,7 +29,7 @@ actor GatewayEndpointStore {
         case password
     }
 
-    private static let envOverrideWarnings = LockIsolated((token: false, password: false))
+    private static let envOverrideWarnings = OSAllocatedUnfairLock(initialState: (token: false, password: false))
 
     struct Deps: Sendable {
         let mode: @Sendable () async -> AppState.ConnectionMode
@@ -211,7 +211,7 @@ actor GatewayEndpointStore {
         envVar: String,
         configKey: String)
     {
-        let shouldWarn = Self.envOverrideWarnings.withValue { state in
+        let shouldWarn = Self.envOverrideWarnings.withLock { state in
             switch kind {
             case .token:
                 guard !state.token else { return false }

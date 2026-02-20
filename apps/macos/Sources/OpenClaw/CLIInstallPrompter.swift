@@ -36,6 +36,8 @@ final class CLIInstallPrompter {
     }
 
     private func shouldPrompt() -> Bool {
+        // Never prompt when the app bundle already contains all needed resources.
+        guard !BundledAppDetector.isFullyBundled() else { return false }
         guard !self.isPrompting else { return false }
         guard AppStateStore.shared.onboardingSeen else { return false }
         guard AppStateStore.shared.connectionMode == .local else { return false }

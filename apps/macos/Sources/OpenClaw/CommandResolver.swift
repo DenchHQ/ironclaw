@@ -4,6 +4,23 @@ enum CommandResolver {
     private static let projectRootDefaultsKey = "openclaw.gatewayProjectRootPath"
     private static let helperName = "openclaw"
 
+    // MARK: - Bundled runtime helpers
+
+    static func bundledNodeBinPath() -> String? {
+        Bundle.main.resourceURL?
+            .appendingPathComponent("runtimes/node/bin")
+            .path
+    }
+
+    static func bundledGatewayEntrypoint() -> String? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        let candidates = [
+            resources.appendingPathComponent("gateway/dist/index.js").path,
+            resources.appendingPathComponent("gateway/openclaw.mjs").path,
+        ]
+        return candidates.first { FileManager().isReadableFile(atPath: $0) }
+    }
+
     static func gatewayEntrypoint(in root: URL) -> String? {
         let distEntry = root.appendingPathComponent("dist/index.js").path
         if FileManager().isReadableFile(atPath: distEntry) { return distEntry }
@@ -89,6 +106,10 @@ enum CommandResolver {
         // Dev-only convenience. Avoid project-local PATH hijacking in release builds.
         extras.insert(projectRoot.appendingPathComponent("node_modules/.bin").path, at: 0)
         #endif
+        // Bundled Node.js takes highest priority so bundled apps work without any system Node.
+        if let bundled = Self.bundledNodeBinPath() {
+            extras.insert(bundled, at: 0)
+        }
         let openclawPaths = self.openclawManagedPaths(home: home)
         if !openclawPaths.isEmpty {
             extras.insert(contentsOf: openclawPaths, at: 1)

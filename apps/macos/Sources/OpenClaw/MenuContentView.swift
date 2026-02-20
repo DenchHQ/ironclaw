@@ -106,6 +106,13 @@ struct MenuContent: View {
                 self.voiceWakeMicMenu
             }
             Divider()
+            if BundledAppDetector.hasWebApp() {
+                Button {
+                    DashboardWindowController.shared.bringToFront()
+                } label: {
+                    Label("Show Dashboard", systemImage: "macwindow")
+                }
+            }
             Button {
                 Task { @MainActor in
                     await self.openDashboard()

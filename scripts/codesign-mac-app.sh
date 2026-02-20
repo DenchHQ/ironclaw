@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_BUNDLE="${1:-dist/OpenClaw.app}"
+ORIG_APP_BUNDLE="$APP_BUNDLE"
 IDENTITY="${SIGN_IDENTITY:-}"
 TIMESTAMP_MODE="${CODESIGN_TIMESTAMP:-auto}"
 DISABLE_LIBRARY_VALIDATION="${DISABLE_LIBRARY_VALIDATION:-0}"
@@ -188,17 +189,39 @@ fi
 
 APP_ENTITLEMENTS="$ENT_TMP_APP_BASE"
 
-# clear extended attributes to avoid stale signatures
-xattr -cr "$APP_BUNDLE" 2>/dev/null || true
+# Copy to /tmp to avoid iCloud Drive File Provider unremovable xattr detritus
+TMP_APP_BUNDLE="/tmp/OpenClaw.app.$$"
+rm -rf "$TMP_APP_BUNDLE"
+# ditto ignores xattrs but preserves permissions with --norsrc
+ditto --norsrc "$ORIG_APP_BUNDLE" "$TMP_APP_BUNDLE"
+APP_BUNDLE="$TMP_APP_BUNDLE"
+
+# clear extended attributes and resource forks to avoid stale signatures
+chmod -R u+rw "$APP_BUNDLE" 2>/dev/null || true
+dot_clean -m "$APP_BUNDLE" 2>/dev/null || true
+find "$APP_BUNDLE" -exec xattr -c {} \; 2>/dev/null || true
+
+strip_provenance() {
+  local target="$1"
+  if [ -f "$target" ] && ! [ -L "$target" ]; then
+    local tmp_target="${target}.strip"
+    cat "$target" > "$tmp_target"
+    chmod +x "$tmp_target"
+    rm -f "$target"
+    mv "$tmp_target" "$target"
+  fi
+}
 
 sign_item() {
   local target="$1"
   local entitlements="$2"
+  strip_provenance "$target"
   codesign --force ${options_args+"${options_args[@]}"} "${timestamp_args[@]}" --entitlements "$entitlements" --sign "$IDENTITY" "$target"
 }
 
 sign_plain_item() {
   local target="$1"
+  strip_provenance "$target"
   codesign --force ${options_args+"${options_args[@]}"} "${timestamp_args[@]}" --sign "$IDENTITY" "$target"
 }
 
@@ -280,10 +303,35 @@ if [ -d "$APP_BUNDLE/Contents/Frameworks" ]; then
   done
 fi
 
+# Sign bundled Node.js binary (requires allow-jit + allow-unsigned-executable-memory)
+NODE_BIN="$APP_BUNDLE/Contents/Resources/runtimes/node/bin/node"
+if [ -f "$NODE_BIN" ]; then
+  echo "Signing bundled Node.js binary"
+  sign_item "$NODE_BIN" "$ENT_TMP_RUNTIME"
+fi
+
+# Sign any native addons (.node files) in webapp and gateway resource directories
+for resource_dir in \
+  "$APP_BUNDLE/Contents/Resources/webapp" \
+  "$APP_BUNDLE/Contents/Resources/gateway"
+do
+  if [ -d "$resource_dir" ]; then
+    find "$resource_dir" -name "*.node" -print0 | while IFS= read -r -d '' f; do
+      echo "Signing native addon: $f"; sign_plain_item "$f"
+    done
+  fi
+done
+
 # Finally sign the bundle
 sign_item "$APP_BUNDLE" "$APP_ENTITLEMENTS"
 
 verify_team_ids
 
 rm -f "$ENT_TMP_BASE" "$ENT_TMP_APP_BASE" "$ENT_TMP_RUNTIME"
-echo "Codesign complete for $APP_BUNDLE"
+
+# Copy back from /tmp and clean up
+rm -rf "$ORIG_APP_BUNDLE"
+ditto "$TMP_APP_BUNDLE" "$ORIG_APP_BUNDLE"
+rm -rf "$TMP_APP_BUNDLE"
+
+echo "Codesign complete for $ORIG_APP_BUNDLE"

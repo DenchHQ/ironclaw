@@ -123,6 +123,14 @@ else
   echo "🖥  Skipping Control UI build (SKIP_UI_BUILD=1)"
 fi
 
+# Build Next.js web app (standalone output required for bundling)
+if [[ "${SKIP_WEBAPP_BUILD:-0}" != "1" ]]; then
+  echo "🌐 Building web app (Next.js standalone)"
+  (cd "$ROOT_DIR" && pnpm --filter ironclaw-web build)
+else
+  echo "🌐 Skipping web app build (SKIP_WEBAPP_BUILD=1)"
+fi
+
 cd "$ROOT_DIR/apps/macos"
 
 echo "🔨 Building $PRODUCT ($BUILD_CONFIG) [${BUILD_ARCHS[*]}]"
@@ -172,7 +180,7 @@ if [[ "${#BUILD_ARCHS[@]}" -gt 1 ]]; then
 fi
 chmod +x "$APP_ROOT/Contents/MacOS/OpenClaw"
 # SwiftPM outputs ad-hoc signed binaries; strip the signature before install_name_tool to avoid warnings.
-/usr/bin/codesign --remove-signature "$APP_ROOT/Contents/MacOS/OpenClaw" 2>/dev/null || true
+# /usr/bin/codesign --remove-signature "$APP_ROOT/Contents/MacOS/OpenClaw" 2>/dev/null || true
 
 SPARKLE_FRAMEWORK_PRIMARY="$(sparkle_framework_for_arch "$PRIMARY_ARCH")"
 if [ -d "$SPARKLE_FRAMEWORK_PRIMARY" ]; then
@@ -250,6 +258,77 @@ else
     echo "ERROR: Textual resource bundle not found. Set ALLOW_MISSING_TEXTUAL_BUNDLE=1 to bypass." >&2
     exit 1
   fi
+fi
+
+echo "🌐 Bundling web app (Next.js standalone)"
+WEBAPP_DEST="$APP_ROOT/Contents/Resources/webapp"
+WEBAPP_STANDALONE="$ROOT_DIR/apps/web/.next/standalone"
+if [[ -d "$WEBAPP_STANDALONE" ]]; then
+  rm -rf "$WEBAPP_DEST"
+  cp -R "$WEBAPP_STANDALONE/" "$WEBAPP_DEST/"
+  mkdir -p "$WEBAPP_DEST/.next"
+  if [[ -d "$ROOT_DIR/apps/web/.next/static" ]]; then
+    cp -R "$ROOT_DIR/apps/web/.next/static/" "$WEBAPP_DEST/.next/static/"
+  fi
+  if [[ -d "$ROOT_DIR/apps/web/public" ]]; then
+    cp -R "$ROOT_DIR/apps/web/public/" "$WEBAPP_DEST/public/"
+  fi
+  echo "  ✓ web app bundled at $WEBAPP_DEST"
+else
+  echo "WARN: Next.js standalone output not found at $WEBAPP_STANDALONE; skipping web app bundle" >&2
+fi
+
+echo "🔌 Bundling gateway"
+GATEWAY_DEST="$APP_ROOT/Contents/Resources/gateway"
+rm -rf "$GATEWAY_DEST"
+mkdir -p "$GATEWAY_DEST"
+if [[ -d "$ROOT_DIR/dist" ]]; then
+  rsync -av --exclude="*.app" "$ROOT_DIR/dist/" "$GATEWAY_DEST/dist/" >/dev/null
+fi
+if [[ -f "$ROOT_DIR/openclaw.mjs" ]]; then
+  cp "$ROOT_DIR/openclaw.mjs" "$GATEWAY_DEST/openclaw.mjs"
+fi
+if [[ -f "$ROOT_DIR/package.json" ]]; then
+  cp "$ROOT_DIR/package.json" "$GATEWAY_DEST/package.json"
+fi
+echo "  ✓ gateway bundled at $GATEWAY_DEST"
+
+# Bundle a universal Node.js binary (arm64 + x86_64)
+NODE_VERSION="${NODE_VERSION:-22.14.0}"
+if [[ "${SKIP_NODE_BUNDLE:-0}" != "1" ]]; then
+  echo "📦 Bundling Node.js ${NODE_VERSION} (universal)"
+  NODE_DEST="$APP_ROOT/Contents/Resources/runtimes/node/bin"
+  mkdir -p "$NODE_DEST"
+  TMP_NODE=$(mktemp -d)
+  cleanup_node_tmp() { rm -rf "$TMP_NODE"; }
+  trap cleanup_node_tmp EXIT
+
+  ARM64_TGZ="$TMP_NODE/node-arm64.tar.gz"
+  X64_TGZ="$TMP_NODE/node-x64.tar.gz"
+  ARM64_NODE="$TMP_NODE/node-arm64"
+  X64_NODE="$TMP_NODE/node-x64"
+
+  echo "  Downloading arm64..."
+  curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-arm64.tar.gz" -o "$ARM64_TGZ"
+  echo "  Downloading x64..."
+  curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-x64.tar.gz" -o "$X64_TGZ"
+
+  echo "  Extracting..."
+  tar -xzf "$ARM64_TGZ" -C "$TMP_NODE" "node-v${NODE_VERSION}-darwin-arm64/bin/node"
+  tar -xzf "$X64_TGZ"  -C "$TMP_NODE" "node-v${NODE_VERSION}-darwin-x64/bin/node"
+  mv "$TMP_NODE/node-v${NODE_VERSION}-darwin-arm64/bin/node" "$ARM64_NODE"
+  mv "$TMP_NODE/node-v${NODE_VERSION}-darwin-x64/bin/node"  "$X64_NODE"
+
+  echo "  Creating universal binary..."
+  /usr/bin/lipo -create "$ARM64_NODE" "$X64_NODE" -output "$NODE_DEST/node"
+  chmod +x "$NODE_DEST/node"
+  /usr/bin/codesign --remove-signature "$NODE_DEST/node" 2>/dev/null || true
+
+  echo "  ✓ Node.js $(/usr/bin/file "$NODE_DEST/node")"
+  trap - EXIT
+  rm -rf "$TMP_NODE"
+else
+  echo "📦 Skipping Node.js bundle (SKIP_NODE_BUNDLE=1)"
 fi
 
 echo "⏹  Stopping any running OpenClaw"

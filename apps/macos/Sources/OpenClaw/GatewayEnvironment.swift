@@ -100,6 +100,17 @@ enum GatewayEnvironment {
         Semver.parse(versionString)
     }
 
+    static func readBundledGatewayVersion() -> Semver? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        let pkg = resources.appendingPathComponent("gateway/package.json")
+        guard let data = try? Data(contentsOf: pkg) else { return nil }
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let version = json["version"] as? String
+        else { return nil }
+        return Semver.parse(version)
+    }
+
     static func check() -> GatewayEnvironmentStatus {
         let start = Date()
         defer {
@@ -115,6 +126,9 @@ enum GatewayEnvironment {
 
         let projectRoot = CommandResolver.projectRoot()
         let projectEntrypoint = CommandResolver.gatewayEntrypoint(in: projectRoot)
+        // Bundled gateway takes priority over project-local entrypoint.
+        let bundledEntrypoint = CommandResolver.bundledGatewayEntrypoint()
+        let effectiveEntrypoint = bundledEntrypoint ?? projectEntrypoint
 
         switch RuntimeLocator.resolve(searchPaths: CommandResolver.preferredPaths()) {
         case let .failure(err):
@@ -127,7 +141,7 @@ enum GatewayEnvironment {
         case let .success(runtime):
             let gatewayBin = CommandResolver.openclawExecutable()
 
-            if gatewayBin == nil, projectEntrypoint == nil {
+            if gatewayBin == nil, effectiveEntrypoint == nil {
                 return GatewayEnvironmentStatus(
                     kind: .missingGateway,
                     nodeVersion: runtime.version.description,
@@ -137,6 +151,7 @@ enum GatewayEnvironment {
             }
 
             let installed = gatewayBin.flatMap { self.readGatewayVersion(binary: $0) }
+                ?? self.readBundledGatewayVersion()
                 ?? self.readLocalGatewayVersion(projectRoot: projectRoot)
 
             if let expected, let installed, !installed.compatible(with: expected) {
@@ -152,13 +167,16 @@ enum GatewayEnvironment {
                     """)
             }
 
-            let gatewayLabel = gatewayBin != nil ? "global" : "local"
+            let gatewayLabel: String
+            if gatewayBin != nil { gatewayLabel = "global" }
+            else if bundledEntrypoint != nil { gatewayLabel = "bundled" }
+            else { gatewayLabel = "local" }
             let gatewayVersionText = installed?.description ?? "unknown"
             // Avoid repeating "(local)" twice; if using the local entrypoint, show the path once.
-            let localPathHint = gatewayBin == nil && projectEntrypoint != nil
+            let localPathHint = gatewayBin == nil && bundledEntrypoint == nil && projectEntrypoint != nil
                 ? " (local: \(projectEntrypoint ?? "unknown"))"
                 : ""
-            let gatewayLabelText = gatewayBin != nil
+            let gatewayLabelText = gatewayBin != nil || bundledEntrypoint != nil
                 ? "(\(gatewayLabel))"
                 : localPathHint.isEmpty ? "(\(gatewayLabel))" : localPathHint
             return GatewayEnvironmentStatus(
@@ -182,6 +200,9 @@ enum GatewayEnvironment {
         }
         let projectRoot = CommandResolver.projectRoot()
         let projectEntrypoint = CommandResolver.gatewayEntrypoint(in: projectRoot)
+        // Bundled gateway takes priority over project-local entrypoint.
+        let entry = CommandResolver.bundledGatewayEntrypoint()
+                 ?? projectEntrypoint
         let status = self.check()
         let gatewayBin = CommandResolver.openclawExecutable()
         let runtime = RuntimeLocator.resolve(searchPaths: CommandResolver.preferredPaths())
@@ -197,7 +218,7 @@ enum GatewayEnvironment {
             return GatewayCommandResolution(status: status, command: cmd)
         }
 
-        if let entry = projectEntrypoint,
+        if let entry,
            case let .success(resolvedRuntime) = runtime
         {
             let bind = self.preferredGatewayBind() ?? "loopback"
