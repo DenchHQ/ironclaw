@@ -217,7 +217,7 @@ export async function agentCommand(
   }
   const agentCfg = cfg.agents?.defaults;
   const sessionAgentId = agentIdOverride ?? resolveAgentIdFromSessionKey(opts.sessionKey?.trim());
-  const workspaceDirRaw = resolveAgentWorkspaceDir(cfg, sessionAgentId);
+  const workspaceDirRaw = opts.workspace?.trim() || resolveAgentWorkspaceDir(cfg, sessionAgentId);
   const agentDir = resolveAgentDir(cfg, sessionAgentId);
   const workspace = await ensureAgentWorkspace({
     dir: workspaceDirRaw,
@@ -332,7 +332,11 @@ export async function agentCommand(
       });
     }
 
-    const needsSkillsSnapshot = isNewSession || !sessionEntry?.skillsSnapshot;
+    const cachedSnapshot = sessionEntry?.skillsSnapshot;
+    const needsSkillsSnapshot =
+      isNewSession ||
+      !cachedSnapshot ||
+      (cachedSnapshot.workspaceDir && cachedSnapshot.workspaceDir !== workspaceDir);
     const skillsSnapshotVersion = getSkillsSnapshotVersion(workspaceDir);
     const skillFilter = resolveAgentSkillsFilter(cfg, sessionAgentId);
     const skillsSnapshot = needsSkillsSnapshot

@@ -94,4 +94,6 @@ export type SkillSnapshot = {
   /** Skills with `inject: true` whose full content should be included in the system prompt. */
   injectedSkills?: InjectedSkillContent[];
   version?: number;
+  /** Workspace dir this snapshot was built for (used to invalidate on profile switch). */
+  workspaceDir?: string;
 };

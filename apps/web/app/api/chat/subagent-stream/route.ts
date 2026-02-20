@@ -1,4 +1,4 @@
-import { subscribeToSubagent, hasActiveSubagent, isSubagentRunning, ensureRegisteredFromDisk } from "@/lib/subagent-runs";
+import { subscribeToSubagent, hasActiveSubagent, isSubagentRunning, ensureRegisteredFromDisk, ensureSubagentStreamable } from "@/lib/subagent-runs";
 import type { SseEvent } from "@/lib/subagent-runs";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,6 +50,10 @@ export async function GET(req: Request) {
 	if (!registered && !hasActiveSubagent(sessionKey)) {
 		return new Response("Subagent not found", { status: 404 });
 	}
+
+	// For still-running subagents rehydrated from disk, activate the gateway
+	// WebSocket subscription so new events arrive in real time.
+	ensureSubagentStreamable(sessionKey);
 
 	const isActive = isSubagentRunning(sessionKey);
 	const encoder = new TextEncoder();

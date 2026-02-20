@@ -8,9 +8,10 @@ import { useWorkspaceWatcher } from "../hooks/use-workspace-watcher";
 import { ObjectTable } from "../components/workspace/object-table";
 import { ObjectKanban } from "../components/workspace/object-kanban";
 import { DocumentView } from "../components/workspace/document-view";
-import { FileViewer } from "../components/workspace/file-viewer";
+import { FileViewer, isSpreadsheetFile } from "../components/workspace/file-viewer";
 import { CodeViewer } from "../components/workspace/code-viewer";
 import { MediaViewer, detectMediaType, type MediaType } from "../components/workspace/media-viewer";
+import { HtmlViewer } from "../components/workspace/html-viewer";
 import { DatabaseViewer, DuckDBMissing } from "../components/workspace/database-viewer";
 import { Breadcrumbs } from "../components/workspace/breadcrumbs";
 import { ChatSessionsSidebar } from "../components/workspace/chat-sessions-sidebar";
@@ -96,6 +97,8 @@ type ContentState =
   | { kind: "document"; data: FileData; title: string }
   | { kind: "file"; data: FileData; filename: string }
   | { kind: "code"; data: FileData; filename: string }
+  | { kind: "html"; filename: string; rawUrl: string; contentUrl: string }
+  | { kind: "spreadsheet"; url: string; filename: string }
   | { kind: "media"; url: string; mediaType: MediaType; filename: string; filePath: string }
   | { kind: "database"; dbPath: string; filename: string }
   | { kind: "report"; reportPath: string; filename: string }
@@ -355,6 +358,7 @@ function WorkspacePageInner() {
     reconnect: reconnectWorkspace,
     browseDir, setBrowseDir, parentDir: browseParentDir, workspaceRoot, openclawDir,
     activeProfile,
+    showHidden, setShowHidden,
   } = useWorkspaceWatcher();
 
   // handleProfileSwitch is defined below fetchSessions/fetchCronJobs (avoids TDZ)
@@ -664,13 +668,33 @@ function WorkspacePageInner() {
             return;
           }
 
+          // HTML files: load iframe immediately, lazy-fetch source for code view
+          const ext = node.name.split(".").pop()?.toLowerCase() ?? "";
+          if (ext === "html" || ext === "htm") {
+            setContent({
+              kind: "html",
+              filename: node.name,
+              rawUrl: rawFileUrl(node.path),
+              contentUrl: fileApiUrl(node.path),
+            });
+            return;
+          }
+
+          if (isSpreadsheetFile(node.name)) {
+            setContent({
+              kind: "spreadsheet",
+              url: rawFileUrl(node.path),
+              filename: node.name,
+            });
+            return;
+          }
+
           const res = await fetch(fileApiUrl(node.path));
           if (!res.ok) {
             setContent({ kind: "none" });
             return;
           }
           const data: FileData = await res.json();
-          // Route code files to the syntax-highlighted CodeViewer
           if (isCodeFile(node.name)) {
             setContent({ kind: "code", data, filename: node.name });
           } else {
@@ -1035,7 +1059,9 @@ function WorkspacePageInner() {
   // Sync URL bar with active content / chat state.
   // Uses window.location instead of searchParams in the comparison to
   // avoid a circular dependency (searchParams updates → effect fires →
-  // router.replace → searchParams updates → …).
+  // router.push → searchParams updates → …).
+  // push (not replace) so the browser back button walks through previous
+  // workspace views instead of jumping straight out of /workspace.
   useEffect(() => {
     const current = new URLSearchParams(window.location.search);
 
@@ -1046,12 +1072,12 @@ function WorkspacePageInner() {
         params.set("path", activePath);
         const entry = current.get("entry");
         if (entry) {params.set("entry", entry);}
-        router.replace(`/workspace?${params.toString()}`, { scroll: false });
+        router.push(`/workspace?${params.toString()}`, { scroll: false });
       }
     } else if (activeSessionId) {
       // Chat mode — no file selected.
       if (current.get("chat") !== activeSessionId || current.has("path")) {
-        router.replace(`/workspace?chat=${encodeURIComponent(activeSessionId)}`, { scroll: false });
+        router.push(`/workspace?chat=${encodeURIComponent(activeSessionId)}`, { scroll: false });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excludes searchParams to avoid infinite loop
@@ -1063,7 +1089,7 @@ function WorkspacePageInner() {
       setEntryModal({ objectName, entryId });
       const params = new URLSearchParams(searchParams.toString());
       params.set("entry", `${objectName}:${entryId}`);
-      router.replace(`/workspace?${params.toString()}`, { scroll: false });
+      router.push(`/workspace?${params.toString()}`, { scroll: false });
     },
     [searchParams, router],
   );
@@ -1308,6 +1334,8 @@ function WorkspacePageInner() {
             onExternalDrop={handleSidebarExternalDrop}
             activeProfile={activeProfile}
             onProfileSwitch={handleProfileSwitch}
+            showHidden={showHidden}
+            onToggleHidden={() => setShowHidden((v) => !v)}
             mobile
             onClose={() => setSidebarOpen(false)}
           />
@@ -1345,6 +1373,8 @@ function WorkspacePageInner() {
               onProfileSwitch={handleProfileSwitch}
               width={leftSidebarWidth}
               onCollapse={() => setLeftSidebarCollapsed(true)}
+              showHidden={showHidden}
+              onToggleHidden={() => setShowHidden((v) => !v)}
             />
           </div>
           )}
@@ -2066,11 +2096,29 @@ function ContentRenderer({
         />
       );
 
+    case "spreadsheet":
+      return (
+        <FileViewer
+          filename={content.filename}
+          type="spreadsheet"
+          url={content.url}
+        />
+      );
+
     case "code":
       return (
         <CodeViewer
           content={content.data.content}
           filename={content.filename}
+        />
+      );
+
+    case "html":
+      return (
+        <HtmlViewer
+          filename={content.filename}
+          rawUrl={content.rawUrl}
+          contentUrl={content.contentUrl}
         />
       );
 

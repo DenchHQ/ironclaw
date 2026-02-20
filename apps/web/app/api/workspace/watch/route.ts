@@ -3,95 +3,137 @@ import { resolveWorkspaceRoot } from "@/lib/workspace";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// ---------------------------------------------------------------------------
+// Singleton watcher: one chokidar instance shared across all SSE connections.
+// Uses polling (no native fs.watch FDs) so it doesn't compete with Next.js's
+// own dev watcher for the macOS per-process file-descriptor limit.
+// ---------------------------------------------------------------------------
+
+type Listener = (type: string, relPath: string) => void;
+
+let listeners = new Set<Listener>();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let sharedWatcher: any = null;
+let sharedRoot: string | null = null;
+let __watcherReady = false;
+
+async function ensureWatcher(root: string) {
+  if (sharedWatcher && sharedRoot === root) {return;}
+
+  // Root changed (e.g. profile switch) -- close the old watcher first.
+  if (sharedWatcher) {
+    await sharedWatcher.close();
+    sharedWatcher = null;
+    sharedRoot = null;
+    _watcherReady = false;
+  }
+
+  try {
+    const chokidar = await import("chokidar");
+    sharedRoot = root;
+    sharedWatcher = chokidar.watch(root, {
+      ignoreInitial: true,
+      usePolling: true,
+      interval: 1500,
+      binaryInterval: 3000,
+      ignored: [
+        /(^|[\\/])node_modules([\\/]|$)/,
+        /(^|[\\/])\.git([\\/]|$)/,
+        /(^|[\\/])\.next([\\/]|$)/,
+        /(^|[\\/])dist([\\/]|$)/,
+        /\.duckdb\.wal$/,
+        /\.duckdb\.tmp$/,
+      ],
+      depth: 5,
+    });
+
+    sharedWatcher.on("all", (eventType: string, filePath: string) => {
+      const rel = filePath.startsWith(root)
+        ? filePath.slice(root.length + 1)
+        : filePath;
+      for (const fn of listeners) {fn(eventType, rel);}
+    });
+
+    sharedWatcher.once("ready", () => {_watcherReady = true;});
+
+    sharedWatcher.on("error", () => {
+      // Swallow; polling mode shouldn't hit EMFILE but be safe.
+    });
+  } catch {
+    // chokidar unavailable -- listeners simply won't fire.
+  }
+}
+
+function stopWatcherIfIdle() {
+  if (listeners.size > 0 || !sharedWatcher) {return;}
+  sharedWatcher.close();
+  sharedWatcher = null;
+  sharedRoot = null;
+  _watcherReady = false;
+}
+
 /**
  * GET /api/workspace/watch
  *
  * Server-Sent Events endpoint that watches the workspace for file changes.
- * Sends events: { type: "add"|"change"|"unlink"|"addDir"|"unlinkDir", path: string }
  * Falls back gracefully if chokidar is unavailable.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const root = resolveWorkspaceRoot();
   if (!root) {
     return new Response("Workspace not found", { status: 404 });
   }
 
   const encoder = new TextEncoder();
+  let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const stream = new ReadableStream({
     async start(controller) {
-      // Send initial heartbeat so the client knows the connection is alive
       controller.enqueue(encoder.encode("event: connected\ndata: {}\n\n"));
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let watcher: any = null;
-      let closed = false;
-
-      // Debounce: batch rapid events into a single "refresh" signal
-      let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-      function sendEvent(type: string, filePath: string) {
+      const listener: Listener = (_type, _rel) => {
         if (closed) {return;}
         if (debounceTimer) {clearTimeout(debounceTimer);}
         debounceTimer = setTimeout(() => {
           if (closed) {return;}
           try {
-            const data = JSON.stringify({ type, path: filePath });
+            const data = JSON.stringify({ type: _type, path: _rel });
             controller.enqueue(encoder.encode(`event: change\ndata: ${data}\n\n`));
-          } catch {
-            // Stream may have been closed
-          }
-        }, 200);
-      }
+          } catch { /* stream closed */ }
+        }, 300);
+      };
 
-      // Keep-alive heartbeat every 30s to prevent proxy/timeout disconnects
-      const heartbeat = setInterval(() => {
+      heartbeat = setInterval(() => {
         if (closed) {return;}
         try {
           controller.enqueue(encoder.encode(": heartbeat\n\n"));
-        } catch {
-          // Ignore if closed
-        }
+        } catch { /* closed */ }
       }, 30_000);
 
-      try {
-        // Dynamic import so the route still compiles if chokidar is missing
-        const chokidar = await import("chokidar");
-        watcher = chokidar.watch(root, {
-          ignoreInitial: true,
-          awaitWriteFinish: { stabilityThreshold: 150, pollInterval: 50 },
-          ignored: [
-            /(^|[\\/])node_modules([\\/]|$)/,
-            /\.duckdb\.wal$/,
-            /\.duckdb\.tmp$/,
-          ],
-          depth: 10,
-        });
+      function teardown() {
+        if (closed) {return;}
+        closed = true;
+        listeners.delete(listener);
+        if (heartbeat) {clearInterval(heartbeat);}
+        if (debounceTimer) {clearTimeout(debounceTimer);}
+        stopWatcherIfIdle();
+      }
 
-        watcher.on("all", (eventType: string, filePath: string) => {
-          // Make path relative to workspace root
-          const rel = filePath.startsWith(root)
-            ? filePath.slice(root.length + 1)
-            : filePath;
-          sendEvent(eventType, rel);
-        });
-      } catch {
-        // chokidar not available, send a fallback event and close
+      req.signal.addEventListener("abort", teardown, { once: true });
+
+      listeners.add(listener);
+      await ensureWatcher(root);
+
+      if (!sharedWatcher) {
         controller.enqueue(
           encoder.encode("event: error\ndata: {\"error\":\"File watching unavailable\"}\n\n"),
         );
       }
-
-      // Cleanup when the client disconnects
-      // The cancel callback is invoked by the runtime when the response is aborted
-      const originalCancel = stream.cancel?.bind(stream);
-      stream.cancel = async (reason) => {
-        closed = true;
-        clearInterval(heartbeat);
-        if (debounceTimer) {clearTimeout(debounceTimer);}
-        if (watcher) {await watcher.close();}
-        if (originalCancel) {return originalCancel(reason);}
-      };
+    },
+    cancel() {
+      closed = true;
     },
   });
 
