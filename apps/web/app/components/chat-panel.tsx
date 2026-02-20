@@ -17,6 +17,12 @@ import {
 	type SelectedFile,
 } from "./file-picker-modal";
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { UnicodeSpinner } from "./unicode-spinner";
 
 // ── Attachment types & helpers ──
@@ -487,6 +493,8 @@ type ChatPanelProps = {
 	onSubagentSpawned?: (info: SubagentSpawnInfo) => void;
 	/** Called when user clicks a subagent card in the chat to view its output. */
 	onSubagentClick?: (task: string) => void;
+	/** Called when user clicks an inline file path in chat output. */
+	onFilePathClick?: (path: string) => Promise<boolean | void> | boolean | void;
 	/** Called when user deletes the current session (e.g. from header menu). */
 	onDeleteSession?: (sessionId: string) => void;
 };
@@ -503,6 +511,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			onSessionsChange,
 			onSubagentSpawned,
 			onSubagentClick,
+			onFilePathClick,
 			onDeleteSession,
 		},
 		ref,
@@ -540,21 +549,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
-
-		// ── Header menu (3-dots) ──
-		const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
-		const headerMenuRef = useRef<HTMLDivElement>(null);
-		useEffect(() => {
-			function handleClickOutside(e: MouseEvent) {
-				if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
-					setHeaderMenuOpen(false);
-				}
-			}
-			if (headerMenuOpen) {
-				document.addEventListener("mousedown", handleClickOutside);
-				return () => document.removeEventListener("mousedown", handleClickOutside);
-			}
-		}, [headerMenuOpen]);
 
 		const filePath = fileContext?.path ?? null;
 
@@ -1401,12 +1395,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							</h2>
 						)}
 					</div>
-					<div className="flex items-center gap-1 shrink-0" ref={headerMenuRef}>
+					<div className="flex items-center gap-1 shrink-0">
 						{currentSessionId && onDeleteSession && (
-							<div className="relative">
-								<button
-									type="button"
-									onClick={() => setHeaderMenuOpen((open) => !open)}
+							<DropdownMenu>
+								<DropdownMenuTrigger
 									className="p-1.5 rounded-lg"
 									style={{ color: "var(--color-text-muted)" }}
 									title="More options"
@@ -1426,33 +1418,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 										<circle cx="5" cy="12" r="1" />
 										<circle cx="19" cy="12" r="1" />
 									</svg>
-								</button>
-								{headerMenuOpen && (
-									<div
-										className="absolute right-0 top-full z-50 mt-0.5 py-1 rounded-lg shadow-lg border whitespace-nowrap"
-										style={{
-											background: "var(--color-surface)",
-											borderColor: "var(--color-border)",
-										}}
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="end" side="bottom">
+									<DropdownMenuItem
+										variant="destructive"
+										onSelect={() => onDeleteSession(currentSessionId)}
 									>
-										<button
-											type="button"
-											onClick={(e) => {
-												e.stopPropagation();
-												setHeaderMenuOpen(false);
-												onDeleteSession(currentSessionId);
-											}}
-											className="w-full text-left px-3 py-2 text-sm transition-colors rounded-md hover:opacity-90"
-											style={{
-												color: "var(--color-error)",
-												background: "transparent",
-											}}
-										>
-											Delete
-										</button>
-									</div>
-								)}
-							</div>
+										Delete
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
 						)}
 						{compact && (
 							<button
@@ -1590,6 +1565,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								message={message}
 								isStreaming={isStreaming && i === messages.length - 1}
 								onSubagentClick={onSubagentClick}
+								onFilePathClick={onFilePathClick}
 							/>
 						))}
 						{showInlineSpinner && (
@@ -1655,10 +1631,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					>
 						<div
 							data-chat-drop-target=""
-							className="rounded-3xl overflow-hidden border-2 shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow] duration-150 ease-out data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!"
+							className="rounded-3xl overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow] duration-150 ease-out data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!"
 							style={{
 								background: "var(--color-surface)",
-								borderColor: "var(--color-border-strong)",
+								borderColor: "var(--color-border)",
 							}}
 						onDragOver={(e) => {
 							if (

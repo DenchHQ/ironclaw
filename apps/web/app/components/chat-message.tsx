@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { UIMessage } from "ai";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
@@ -482,13 +482,41 @@ async function openFilePath(path: string, reveal = false) {
 	}
 }
 
+type FilePathClickHandler = (
+	path: string,
+) => Promise<boolean | void> | boolean | void;
+
+/** Convert file:// URLs to local paths for in-app preview routing. */
+function normalizePathReference(value: string): string {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("file://")) {
+		return trimmed;
+	}
+	try {
+		const url = new URL(trimmed);
+		if (url.protocol !== "file:") {
+			return trimmed;
+		}
+		const decoded = decodeURIComponent(url.pathname);
+		// Windows file URLs are /C:/... in URL form
+		if (/^\/[A-Za-z]:\//.test(decoded)) {
+			return decoded.slice(1);
+		}
+		return decoded;
+	} catch {
+		return trimmed;
+	}
+}
+
 /** Clickable file path inline code element */
 function FilePathCode({
 	path,
 	children,
+	onFilePathClick,
 }: {
 	path: string;
 	children: React.ReactNode;
+	onFilePathClick?: FilePathClickHandler;
 }) {
 	const [status, setStatus] = useState<"idle" | "opening" | "error">("idle");
 
@@ -496,16 +524,26 @@ function FilePathCode({
 		e.preventDefault();
 		setStatus("opening");
 		try {
-			const res = await fetch("/api/workspace/open-file", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ path }),
-			});
-			if (!res.ok) {
-				setStatus("error");
-				setTimeout(() => setStatus("idle"), 2000);
-			} else {
+			if (onFilePathClick) {
+				const handled = await onFilePathClick(path);
+				if (handled === false) {
+					setStatus("error");
+					setTimeout(() => setStatus("idle"), 2000);
+					return;
+				}
 				setStatus("idle");
+			} else {
+				const res = await fetch("/api/workspace/open-file", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ path }),
+				});
+				if (!res.ok) {
+					setStatus("error");
+					setTimeout(() => setStatus("idle"), 2000);
+				} else {
+					setStatus("idle");
+				}
 			}
 		} catch {
 			setStatus("error");
@@ -524,7 +562,13 @@ function FilePathCode({
 			className={`inline-flex items-center gap-[0.2em] px-[0.3em] py-0 whitespace-nowrap max-w-full overflow-hidden text-ellipsis no-underline transition-colors duration-150 rounded-md text-[color:var(--color-accent)] border border-[color:var(--color-border)] bg-white/20 hover:bg-white/40 active:bg-white ${status === "opening" ? "cursor-wait opacity-70" : "cursor-pointer"}`}
 			onClick={handleClick}
 			onContextMenu={handleContextMenu}
-			title={status === "error" ? "File not found" : "Click to open · Right-click to reveal in Finder"}
+			title={
+				status === "error"
+					? "File not found"
+					: onFilePathClick
+						? "Click to preview in workspace · Right-click to reveal in Finder"
+						: "Click to open · Right-click to reveal in Finder"
+			}
 		>
 			<svg
 				width="12"
@@ -557,103 +601,128 @@ function FilePathCode({
 
 /* ─── Markdown component overrides for chat ─── */
 
-const mdComponents: Components = {
-	// Open external links in new tab
-	a: ({ href, children, ...props }) => {
-		const isExternal =
-			href && (href.startsWith("http") || href.startsWith("//"));
-		return (
-			<a
-				href={href}
-				{...(isExternal
-					? { target: "_blank", rel: "noopener noreferrer" }
-					: {})}
-				{...props}
-			>
-				{children}
-			</a>
-		);
-	},
-	// Render images with loading=lazy
-	img: ({ src, alt, ...props }) => (
-		// eslint-disable-next-line @next/next/no-img-element
-		<img src={src} alt={alt ?? ""} loading="lazy" {...props} />
-	),
-	// Syntax-highlighted fenced code blocks
-	pre: ({ children, ...props }) => {
-		// react-markdown wraps code blocks in <pre><code>...
-		// Extract the code element to get lang + content
-		const child = Array.isArray(children) ? children[0] : children;
-		if (
-			child &&
-			typeof child === "object" &&
-			"type" in child &&
-			(child as { type?: string }).type === "code"
-		) {
-			const codeEl = child as {
-				props?: {
-					className?: string;
-					children?: string;
+function createMarkdownComponents(
+	onFilePathClick?: FilePathClickHandler,
+): Components {
+	return {
+		// Open external links in new tab
+		a: ({ href, children, ...props }) => {
+			const rawHref = typeof href === "string" ? href : "";
+			const normalizedHref = normalizePathReference(rawHref);
+			const isExternal =
+				rawHref && (rawHref.startsWith("http://") || rawHref.startsWith("https://") || rawHref.startsWith("//"));
+			const isWorkspaceAppLink = rawHref.startsWith("/workspace");
+			const isLocalPathLink =
+				!isWorkspaceAppLink &&
+				(Boolean(rawHref.startsWith("file://")) ||
+					looksLikeFilePath(normalizedHref));
+			return (
+				<a
+					href={href}
+					{...(isExternal
+						? { target: "_blank", rel: "noopener noreferrer" }
+						: {})}
+					{...props}
+					onClick={(e) => {
+						if (!isLocalPathLink || !onFilePathClick) {return;}
+						e.preventDefault();
+						void onFilePathClick(normalizedHref);
+					}}
+				>
+					{children}
+				</a>
+			);
+		},
+		// Render images with loading=lazy
+		img: ({ src, alt, ...props }) => (
+			// eslint-disable-next-line @next/next/no-img-element
+			<img src={src} alt={alt ?? ""} loading="lazy" {...props} />
+		),
+		// Syntax-highlighted fenced code blocks
+		pre: ({ children, ...props }) => {
+			// react-markdown wraps code blocks in <pre><code>...
+			// Extract the code element to get lang + content
+			const child = Array.isArray(children) ? children[0] : children;
+			if (
+				child &&
+				typeof child === "object" &&
+				"type" in child &&
+				(child as { type?: string }).type === "code"
+			) {
+				const codeEl = child as {
+					props?: {
+						className?: string;
+						children?: string;
+					};
 				};
-			};
-			const className = codeEl.props?.className ?? "";
-			const langMatch = className.match(/language-(\w+)/);
-			const lang = langMatch?.[1] ?? "";
-			const code =
-				typeof codeEl.props?.children === "string"
-					? codeEl.props.children.replace(/\n$/, "")
-					: "";
+				const className = codeEl.props?.className ?? "";
+				const langMatch = className.match(/language-(\w+)/);
+				const lang = langMatch?.[1] ?? "";
+				const code =
+					typeof codeEl.props?.children === "string"
+						? codeEl.props.children.replace(/\n$/, "")
+						: "";
 
-			// Diff language: render as DiffCard
-			if (lang === "diff") {
-				return <DiffCard diff={code} />;
-			}
+				// Diff language: render as DiffCard
+				if (lang === "diff") {
+					return <DiffCard diff={code} />;
+				}
 
-			// Known language: syntax-highlight with shiki
-			if (lang) {
-				return (
-					<div className="chat-code-block">
-						<div
-							className="chat-code-lang"
-						>
-							{lang}
+				// Known language: syntax-highlight with shiki
+				if (lang) {
+					return (
+						<div className="chat-code-block">
+							<div
+								className="chat-code-lang"
+							>
+								{lang}
+							</div>
+							<SyntaxBlock code={code} lang={lang} />
 						</div>
-						<SyntaxBlock code={code} lang={lang} />
-					</div>
+					);
+				}
+			}
+			// Fallback: default pre rendering
+			return <pre {...props}>{children}</pre>;
+		},
+		// Inline code — detect file paths and make them clickable
+		code: ({ children, className, ...props }) => {
+			// If this code has a language class, it's inside a <pre> and
+			// will be handled by the pre override above. Just return raw.
+			if (className?.startsWith("language-")) {
+				return (
+					<code className={className} {...props}>
+						{children}
+					</code>
 				);
 			}
-		}
-		// Fallback: default pre rendering
-		return <pre {...props}>{children}</pre>;
-	},
-	// Inline code — detect file paths and make them clickable
-	code: ({ children, className, ...props }) => {
-		// If this code has a language class, it's inside a <pre> and
-		// will be handled by the pre override above. Just return raw.
-		if (className?.startsWith("language-")) {
-			return (
-				<code className={className} {...props}>
-					{children}
-				</code>
-			);
-		}
 
-		// Check if the inline code content looks like a file path
-		const text = typeof children === "string" ? children : "";
-		if (text && looksLikeFilePath(text)) {
-			return <FilePathCode path={text}>{children}</FilePathCode>;
-		}
+			// Check if the inline code content looks like a file path
+			const text = typeof children === "string" ? children : "";
+			const normalizedText = normalizePathReference(text);
+			if (normalizedText && looksLikeFilePath(normalizedText)) {
+				return (
+					<FilePathCode path={normalizedText} onFilePathClick={onFilePathClick}>
+						{children}
+					</FilePathCode>
+				);
+			}
 
-		// Regular inline code
-		return <code {...props}>{children}</code>;
-	},
-};
+			// Regular inline code
+			return <code {...props}>{children}</code>;
+		},
+	};
+}
 
 /* ─── Chat message ─── */
 
-export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onSubagentClick }: { message: UIMessage; isStreaming?: boolean; onSubagentClick?: (task: string) => void }) {
+export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onSubagentClick, onFilePathClick }: { message: UIMessage; isStreaming?: boolean; onSubagentClick?: (task: string) => void; onFilePathClick?: FilePathClickHandler }) {
 	const isUser = message.role === "user";
 	const segments = groupParts(message.parts);
+	const markdownComponents = useMemo(
+		() => createMarkdownComponents(onFilePathClick),
+		[onFilePathClick],
+	);
 
 	if (isUser) {
 		// User: right-aligned subtle pill
@@ -797,7 +866,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onS
 			>
 				<ReactMarkdown
 					remarkPlugins={[remarkGfm]}
-					components={mdComponents}
+					components={markdownComponents}
 				>
 					{segment.text}
 				</ReactMarkdown>

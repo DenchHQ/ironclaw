@@ -104,6 +104,19 @@ type ContentState =
   | { kind: "cron-job"; jobId: string; job: CronJob }
   | { kind: "duckdb-missing" };
 
+type SidebarPreviewContent =
+  | { kind: "document"; data: FileData; title: string }
+  | { kind: "file"; data: FileData; filename: string }
+  | { kind: "code"; data: FileData; filename: string }
+  | { kind: "media"; url: string; mediaType: MediaType; filename: string; filePath: string }
+  | { kind: "database"; dbPath: string; filename: string }
+  | { kind: "directory"; path: string; name: string };
+
+type ChatSidebarPreviewState =
+  | { status: "loading"; path: string; filename: string }
+  | { status: "error"; path: string; filename: string; message: string }
+  | { status: "ready"; path: string; filename: string; content: SidebarPreviewContent };
+
 type WebSession = {
   id: string;
   title: string;
@@ -116,7 +129,7 @@ type WebSession = {
 
 /** Detect virtual paths (skills, memories) that live outside the main workspace. */
 function isVirtualPath(path: string): boolean {
-  return path.startsWith("~");
+  return path.startsWith("~") && !path.startsWith("~/");
 }
 
 /** Detect absolute filesystem paths (browse mode). */
@@ -124,12 +137,17 @@ function isAbsolutePath(path: string): boolean {
   return path.startsWith("/");
 }
 
+/** Detect home-relative filesystem paths (e.g. ~/Desktop/file.txt). */
+function isHomeRelativePath(path: string): boolean {
+  return path.startsWith("~/");
+}
+
 /** Pick the right file API endpoint based on virtual vs real vs absolute paths. */
 function fileApiUrl(path: string): string {
   if (isVirtualPath(path)) {
     return `/api/workspace/virtual-file?path=${encodeURIComponent(path)}`;
   }
-  if (isAbsolutePath(path)) {
+  if (isAbsolutePath(path) || isHomeRelativePath(path)) {
     return `/api/workspace/browse-file?path=${encodeURIComponent(path)}`;
   }
   return `/api/workspace/file?path=${encodeURIComponent(path)}`;
@@ -137,7 +155,7 @@ function fileApiUrl(path: string): string {
 
 /** Pick the right raw file URL for media preview. */
 function rawFileUrl(path: string): string {
-  if (isAbsolutePath(path)) {
+  if (isAbsolutePath(path) || isHomeRelativePath(path)) {
     return `/api/workspace/browse-file?path=${encodeURIComponent(path)}&raw=true`;
   }
   return `/api/workspace/raw-file?path=${encodeURIComponent(path)}`;
@@ -146,7 +164,7 @@ function rawFileUrl(path: string): string {
 const LEFT_SIDEBAR_MIN = 200;
 const LEFT_SIDEBAR_MAX = 480;
 const RIGHT_SIDEBAR_MIN = 260;
-const RIGHT_SIDEBAR_MAX = 600;
+const RIGHT_SIDEBAR_MAX = 900;
 const STORAGE_LEFT = "ironclaw-workspace-left-sidebar-width";
 const STORAGE_RIGHT = "ironclaw-workspace-right-sidebar-width";
 
@@ -189,9 +207,11 @@ function ResizeHandle({
         document.removeEventListener("mouseup", up);
         document.body.style.removeProperty("user-select");
         document.body.style.removeProperty("cursor");
+        document.body.classList.remove("resizing");
       };
       document.body.style.setProperty("user-select", "none");
       document.body.style.setProperty("cursor", "col-resize");
+      document.body.classList.add("resizing");
       document.addEventListener("mousemove", move);
       document.addEventListener("mouseup", up);
     },
@@ -228,6 +248,36 @@ function findNode(
 function objectNameFromPath(path: string): string {
   const segments = path.split("/");
   return segments[segments.length - 1];
+}
+
+/** Infer a tree node type from filename extension for ad-hoc path previews. */
+function inferNodeTypeFromFileName(fileName: string): TreeNode["type"] {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "md" || ext === "mdx") {return "document";}
+  if (ext === "duckdb" || ext === "sqlite" || ext === "sqlite3" || ext === "db") {return "database";}
+  return "file";
+}
+
+/** Normalize chat path references (supports file:// URLs). */
+function normalizeChatPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed.startsWith("file://")) {
+    return trimmed;
+  }
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "file:") {
+      return trimmed;
+    }
+    const decoded = decodeURIComponent(url.pathname);
+    // Windows file URLs are /C:/... in URL form
+    if (/^\/[A-Za-z]:\//.test(decoded)) {
+      return decoded.slice(1);
+    }
+    return decoded;
+  } catch {
+    return trimmed;
+  }
 }
 
 /**
@@ -316,6 +366,7 @@ function WorkspacePageInner() {
   const [activePath, setActivePath] = useState<string | null>(null);
   const [content, setContent] = useState<ContentState>({ kind: "none" });
   const [showChatSidebar, setShowChatSidebar] = useState(true);
+  const [chatSidebarPreview, setChatSidebarPreview] = useState<ChatSidebarPreviewState | null>(null);
 
   // Chat session state
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -684,6 +735,169 @@ function WorkspacePageInner() {
       void loadContent(node);
     },
     [loadContent, router, cronJobs, browseDir, workspaceRoot, openclawDir, setBrowseDir],
+  );
+
+  const loadSidebarPreviewFromNode = useCallback(
+    async (node: TreeNode): Promise<SidebarPreviewContent | null> => {
+      if (node.type === "folder") {
+        return { kind: "directory", path: node.path, name: node.name };
+      }
+      if (node.type === "database") {
+        return { kind: "database", dbPath: node.path, filename: node.name };
+      }
+
+      const mediaType = detectMediaType(node.name);
+      if (mediaType) {
+        return {
+          kind: "media",
+          url: rawFileUrl(node.path),
+          mediaType,
+          filename: node.name,
+          filePath: node.path,
+        };
+      }
+
+      const res = await fetch(fileApiUrl(node.path));
+      if (!res.ok) {return null;}
+      const data: FileData = await res.json();
+
+      if (node.type === "document" || data.type === "markdown") {
+        return {
+          kind: "document",
+          data,
+          title: node.name.replace(/\.mdx?$/, ""),
+        };
+      }
+      if (isCodeFile(node.name)) {
+        return { kind: "code", data, filename: node.name };
+      }
+      return { kind: "file", data, filename: node.name };
+    },
+    [],
+  );
+
+  // Open inline file-path mentions from chat.
+  // In chat mode, render a Dropbox-style preview in the right sidebar.
+  const handleFilePathClickFromChat = useCallback(
+    async (rawPath: string) => {
+      const inputPath = normalizeChatPath(rawPath);
+      if (!inputPath) {return false;}
+
+      // Desktop behavior: always use right-sidebar preview for chat path clicks.
+      const shouldPreviewInSidebar = !isMobile;
+
+      const openNode = async (node: TreeNode) => {
+        if (!shouldPreviewInSidebar) {
+          handleNodeSelect(node);
+          setShowChatSidebar(true);
+          return true;
+        }
+
+        // Ensure we are in main-chat layout so the preview panel is visible.
+        if (activePath || content.kind !== "none") {
+          setActivePath(null);
+          setContent({ kind: "none" });
+          router.replace("/workspace", { scroll: false });
+        }
+
+        setChatSidebarPreview({
+          status: "loading",
+          path: node.path,
+          filename: node.name,
+        });
+        const previewContent = await loadSidebarPreviewFromNode(node);
+        if (!previewContent) {
+          setChatSidebarPreview({
+            status: "error",
+            path: node.path,
+            filename: node.name,
+            message: "Could not preview this file.",
+          });
+          return false;
+        }
+        setChatSidebarPreview({
+          status: "ready",
+          path: node.path,
+          filename: node.name,
+          content: previewContent,
+        });
+        return true;
+      };
+
+      // For workspace-relative paths, prefer the live tree so we preserve semantics.
+      if (
+        !isAbsolutePath(inputPath) &&
+        !isHomeRelativePath(inputPath) &&
+        !inputPath.startsWith("./") &&
+        !inputPath.startsWith("../")
+      ) {
+        const node = resolveNode(tree, inputPath);
+        if (node) {
+          return await openNode(node);
+        }
+      }
+
+      try {
+        const res = await fetch(`/api/workspace/path-info?path=${encodeURIComponent(inputPath)}`);
+        if (!res.ok) {return false;}
+        const info = await res.json() as {
+          path?: string;
+          name?: string;
+          type?: "file" | "directory" | "other";
+        };
+        if (!info.path || !info.name || !info.type) {return false;}
+
+        // If this absolute path is inside the current workspace, map it
+        // back to a workspace-relative node first.
+        if (workspaceRoot && (info.path === workspaceRoot || info.path.startsWith(`${workspaceRoot}/`))) {
+          const relPath = info.path === workspaceRoot ? "" : info.path.slice(workspaceRoot.length + 1);
+          if (relPath) {
+            const node = resolveNode(tree, relPath);
+            if (node) {
+              return await openNode(node);
+            }
+          }
+        }
+
+        if (info.type === "directory") {
+          const dirNode: TreeNode = { name: info.name, path: info.path, type: "folder" };
+          if (shouldPreviewInSidebar) {
+            return await openNode(dirNode);
+          }
+          setBrowseDir(info.path);
+          setActivePath(info.path);
+          setContent({
+            kind: "directory",
+            node: { name: info.name, path: info.path, type: "folder" },
+          });
+          setShowChatSidebar(true);
+          return true;
+        }
+
+        if (info.type === "file") {
+          const fileNode: TreeNode = {
+            name: info.name,
+            path: info.path,
+            type: inferNodeTypeFromFileName(info.name),
+          };
+          if (shouldPreviewInSidebar) {
+            return await openNode(fileNode);
+          }
+          const parentDir = info.path.split("/").slice(0, -1).join("/") || "/";
+          if (isAbsolutePath(info.path)) {
+            setBrowseDir(parentDir);
+          }
+          await loadContent(fileNode);
+          setShowChatSidebar(true);
+          return true;
+        }
+      } catch {
+        // Ignore -- chat message bubble shows inline error state.
+      }
+
+      return false;
+    },
+    [activePath, content.kind, isMobile, tree, handleNodeSelect, workspaceRoot, loadSidebarPreviewFromNode, setBrowseDir, loadContent, router],
   );
 
   // Build the enhanced tree: real tree + Cron virtual folder at the bottom
@@ -1232,6 +1446,7 @@ function WorkspacePageInner() {
                   onSessionsChange={refreshSessions}
                   onSubagentSpawned={handleSubagentSpawned}
                   onSubagentClick={handleSubagentClickFromChat}
+                  onFilePathClick={handleFilePathClickFromChat}
                   onDeleteSession={handleDeleteSession}
                   compact={isMobile}
                 />
@@ -1279,29 +1494,36 @@ function WorkspacePageInner() {
                     className="flex shrink-0 flex-col"
                     style={{ width: rightSidebarWidth, minWidth: rightSidebarWidth }}
                   >
-                    <ChatSessionsSidebar
-                      sessions={sessions}
-                      activeSessionId={activeSessionId}
-                      activeSessionTitle={activeSessionTitle}
-                      streamingSessionIds={streamingSessionIds}
-                      subagents={subagents}
-                      activeSubagentKey={activeSubagentKey}
-                      loading={sessionsLoading}
-                      onSelectSession={(sessionId) => {
-                        setActiveSessionId(sessionId);
-                        setActiveSubagentKey(null);
-                        void chatRef.current?.loadSession(sessionId);
-                      }}
-                      onNewSession={() => {
-                        setActiveSessionId(null);
-                        setActiveSubagentKey(null);
-                        void chatRef.current?.newSession();
-                        router.replace("/workspace", { scroll: false });
-                      }}
-                      onSelectSubagent={handleSelectSubagent}
-                      onDeleteSession={handleDeleteSession}
-                      width={rightSidebarWidth}
-                    />
+                    {chatSidebarPreview ? (
+                      <ChatSidebarPreview
+                        preview={chatSidebarPreview}
+                        onClose={() => setChatSidebarPreview(null)}
+                      />
+                    ) : (
+                      <ChatSessionsSidebar
+                        sessions={sessions}
+                        activeSessionId={activeSessionId}
+                        activeSessionTitle={activeSessionTitle}
+                        streamingSessionIds={streamingSessionIds}
+                        subagents={subagents}
+                        activeSubagentKey={activeSubagentKey}
+                        loading={sessionsLoading}
+                        onSelectSession={(sessionId) => {
+                          setActiveSessionId(sessionId);
+                          setActiveSubagentKey(null);
+                          void chatRef.current?.loadSession(sessionId);
+                        }}
+                        onNewSession={() => {
+                          setActiveSessionId(null);
+                          setActiveSubagentKey(null);
+                          void chatRef.current?.newSession();
+                          router.replace("/workspace", { scroll: false });
+                        }}
+                        onSelectSubagent={handleSelectSubagent}
+                        onDeleteSession={handleDeleteSession}
+                        width={rightSidebarWidth}
+                      />
+                    )}
                   </div>
                 </>
               )}
@@ -1354,6 +1576,7 @@ function WorkspacePageInner() {
                       compact
                       fileContext={fileContext}
                       onFileChanged={handleFileChanged}
+                      onFilePathClick={handleFilePathClickFromChat}
                     />
                   </aside>
                 </>
@@ -1379,6 +1602,309 @@ function WorkspacePageInner() {
         />
       )}
     </div>
+  );
+}
+
+function previewFileTypeBadge(filename: string): { label: string; color: string } {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "pdf") {return { label: "PDF", color: "#ef4444" };}
+  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "heic", "avif"].includes(ext)) {return { label: "Image", color: "#3b82f6" };}
+  if (["mp4", "webm", "mov", "avi", "mkv"].includes(ext)) {return { label: "Video", color: "#8b5cf6" };}
+  if (["mp3", "wav", "ogg", "m4a", "aac", "flac"].includes(ext)) {return { label: "Audio", color: "#f59e0b" };}
+  if (["md", "mdx"].includes(ext)) {return { label: "Markdown", color: "#10b981" };}
+  if (["ts", "tsx", "js", "jsx", "py", "go", "rs", "java", "rb", "swift", "kt", "c", "cpp", "h"].includes(ext)) {return { label: ext.toUpperCase(), color: "#3b82f6" };}
+  if (["json", "yaml", "yml", "toml", "xml", "csv"].includes(ext)) {return { label: ext.toUpperCase(), color: "#6b7280" };}
+  if (["duckdb", "sqlite", "sqlite3", "db"].includes(ext)) {return { label: "Database", color: "#6366f1" };}
+  return { label: ext.toUpperCase() || "File", color: "#6b7280" };
+}
+
+function shortenPreviewPath(p: string): string {
+  return p.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
+}
+
+function ChatSidebarPreview({
+  preview,
+  onClose,
+}: {
+  preview: ChatSidebarPreviewState;
+  onClose: () => void;
+}) {
+  const badge = previewFileTypeBadge(preview.filename);
+
+  const openInFinder = useCallback(async () => {
+    try {
+      await fetch("/api/workspace/open-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: preview.path, reveal: true }),
+      });
+    } catch { /* ignore */ }
+  }, [preview.path]);
+
+  const openWithSystem = useCallback(async () => {
+    try {
+      await fetch("/api/workspace/open-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: preview.path }),
+      });
+    } catch { /* ignore */ }
+  }, [preview.path]);
+
+  const downloadUrl = preview.status === "ready" && preview.content.kind === "media"
+    ? preview.content.url
+    : null;
+
+  let body: React.ReactNode;
+
+  if (preview.status === "loading") {
+    body = (
+      <div className="flex flex-col h-full items-center justify-center gap-3">
+        <UnicodeSpinner
+          name="braille"
+          className="text-2xl"
+          style={{ color: "var(--color-text-muted)" }}
+        />
+        <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+          Loading preview...
+        </p>
+      </div>
+    );
+  } else if (preview.status === "error") {
+    body = (
+      <div className="flex flex-col h-full items-center justify-center gap-4 px-6">
+        <div
+          className="w-14 h-14 rounded-2xl flex items-center justify-center"
+          style={{ background: "color-mix(in srgb, var(--color-error) 10%, transparent)" }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="15" x2="9" y1="9" y2="15" />
+            <line x1="9" x2="15" y1="9" y2="15" />
+          </svg>
+        </div>
+        <div className="text-center">
+          <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+            Preview unavailable
+          </p>
+          <p className="text-xs mt-1" style={{ color: "var(--color-text-muted)" }}>
+            {preview.message}
+          </p>
+        </div>
+      </div>
+    );
+  } else {
+    const c = preview.content;
+    switch (c.kind) {
+      case "media":
+        if (c.mediaType === "pdf") {
+          // Hide the browser's built-in PDF toolbar for a cleaner look
+          const pdfUrl = c.url + (c.url.includes("#") ? "&" : "#") + "toolbar=0&navpanes=0&scrollbar=1";
+          body = (
+            <iframe
+              src={pdfUrl}
+              className="w-full h-full"
+              style={{ border: "none", colorScheme: "light" }}
+              title={`Preview: ${c.filename}`}
+            />
+          );
+        } else if (c.mediaType === "image") {
+          body = (
+            <div className="flex items-center justify-center h-full p-4 overflow-auto" style={{ background: "var(--color-bg)" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={c.url}
+                alt={c.filename}
+                className="max-w-full max-h-full object-contain rounded-lg"
+                style={{ boxShadow: "0 2px 16px rgba(0,0,0,0.08)" }}
+                draggable={false}
+              />
+            </div>
+          );
+        } else if (c.mediaType === "video") {
+          body = (
+            <div className="flex items-center justify-center h-full p-4" style={{ background: "#000" }}>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <video src={c.url} controls className="max-w-full max-h-full rounded-lg" />
+            </div>
+          );
+        } else if (c.mediaType === "audio") {
+          body = (
+            <div className="flex flex-col items-center justify-center h-full gap-6 px-6">
+              <div
+                className="w-20 h-20 rounded-2xl flex items-center justify-center"
+                style={{ background: "linear-gradient(135deg, #f59e0b20, #f59e0b08)" }}
+              >
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+                </svg>
+              </div>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <audio src={c.url} controls className="w-full" />
+            </div>
+          );
+        }
+        break;
+      case "document":
+        body = (
+          <div className="p-5 overflow-auto h-full">
+            <div className="workspace-prose text-sm">
+              <DocumentView
+                content={c.data.content}
+                title={c.title}
+              />
+            </div>
+          </div>
+        );
+        break;
+      case "code":
+        body = (
+          <div className="overflow-auto h-full">
+            <CodeViewer content={c.data.content} filename={c.filename} />
+          </div>
+        );
+        break;
+      case "file":
+        body = (
+          <div className="overflow-auto h-full">
+            <FileViewer content={c.data.content} filename={c.filename} type={c.data.type === "yaml" ? "yaml" : "text"} />
+          </div>
+        );
+        break;
+      case "database":
+        body = (
+          <div className="overflow-auto h-full">
+            <DatabaseViewer dbPath={c.dbPath} filename={c.filename} />
+          </div>
+        );
+        break;
+      case "directory":
+        body = (
+          <div className="flex flex-col items-center justify-center h-full gap-4 px-6">
+            <div
+              className="w-14 h-14 rounded-2xl flex items-center justify-center"
+              style={{ background: "color-mix(in srgb, var(--color-accent) 10%, transparent)" }}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+              {c.name}
+            </p>
+          </div>
+        );
+        break;
+      default:
+        body = null;
+    }
+  }
+
+  return (
+    <aside
+      className="h-full border-l flex flex-col"
+      style={{
+        borderColor: "var(--color-border)",
+        background: "var(--color-bg)",
+      }}
+    >
+      {/* Header: close + filename + badge + actions */}
+      <div
+        className="px-3 py-2.5 flex items-center gap-2 flex-shrink-0"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1 rounded-md transition-colors flex-shrink-0"
+          style={{ color: "var(--color-text-muted)" }}
+          title="Close preview"
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+          </svg>
+        </button>
+
+        <span className="text-[13px] font-medium truncate min-w-0" style={{ color: "var(--color-text)" }}>
+          {preview.filename}
+        </span>
+
+        <span
+          className="text-[10px] font-medium px-1.5 py-[1px] rounded flex-shrink-0"
+          style={{
+            background: `${badge.color}14`,
+            color: badge.color,
+          }}
+        >
+          {badge.label}
+        </span>
+
+        <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
+          <button
+            type="button"
+            onClick={openWithSystem}
+            className="p-1.5 rounded-md transition-colors"
+            style={{ color: "var(--color-text-muted)" }}
+            title="Open with default app"
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            </svg>
+          </button>
+          {downloadUrl && (
+            <a
+              href={downloadUrl}
+              download={preview.filename}
+              className="p-1.5 rounded-md transition-colors"
+              style={{ color: "var(--color-text-muted)" }}
+              title="Download"
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" />
+              </svg>
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={openInFinder}
+            className="p-1.5 rounded-md transition-colors"
+            style={{ color: "var(--color-text-muted)" }}
+            title="Reveal in Finder"
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Preview body */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {body}
+      </div>
+
+      {/* Footer path */}
+      <div
+        className="px-3 py-1.5 border-t flex-shrink-0"
+        style={{ borderColor: "var(--color-border)" }}
+      >
+        <p
+          className="text-[10px] truncate"
+          style={{ color: "var(--color-text-muted)", fontFamily: "'SF Mono', 'Fira Code', monospace" }}
+          title={preview.path}
+        >
+          {shortenPreviewPath(preview.path)}
+        </p>
+      </div>
+    </aside>
   );
 }
 

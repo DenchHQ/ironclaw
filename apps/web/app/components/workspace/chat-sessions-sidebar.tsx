@@ -1,7 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { UnicodeSpinner } from "../unicode-spinner";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 
 type WebSession = {
 	id: string;
@@ -154,21 +160,6 @@ export function ChatSessionsSidebar({
 	loading = false,
 }: ChatSessionsSidebarProps) {
 	const [hoveredId, setHoveredId] = useState<string | null>(null);
-	const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-	const menuRef = useRef<HTMLDivElement>(null);
-
-	// Close menu on outside click
-	useEffect(() => {
-		function handleClickOutside(e: MouseEvent) {
-			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-				setMenuOpenId(null);
-			}
-		}
-		if (menuOpenId !== null) {
-			document.addEventListener("mousedown", handleClickOutside);
-			return () => document.removeEventListener("mousedown", handleClickOutside);
-		}
-	}, [menuOpenId]);
 
 	const handleSelect = useCallback(
 		(id: string) => {
@@ -187,9 +178,7 @@ export function ChatSessionsSidebar({
 	);
 
 	const handleDeleteSession = useCallback(
-		(sessionId: string, e: React.MouseEvent) => {
-			e.stopPropagation();
-			setMenuOpenId(null);
+		(sessionId: string) => {
 			onDeleteSession?.(sessionId);
 		},
 		[onDeleteSession],
@@ -279,14 +268,12 @@ export function ChatSessionsSidebar({
 							{group.sessions.map((session) => {
 								const isActive = session.id === activeSessionId && !activeSubagentKey;
 								const isHovered = session.id === hoveredId;
-								const isMenuOpen = menuOpenId === session.id;
-								const showMore = isHovered || isMenuOpen;
+								const showMore = isHovered;
 								const isStreamingSession = streamingSessionIds?.has(session.id) ?? false;
 								const sessionSubagents = subagentsByParent.get(session.id);
 								return (
 									<div
 										key={session.id}
-										ref={isMenuOpen ? menuRef : undefined}
 										className="group relative"
 										onMouseEnter={() => setHoveredId(session.id)}
 										onMouseLeave={() => setHoveredId(null)}
@@ -344,41 +331,26 @@ export function ChatSessionsSidebar({
 											</div>
 										</button>
 										{onDeleteSession && (
-											<div className="relative w-7 shrink-0 flex flex-col items-end">
-												<button
-													type="button"
-													onClick={(e) => {
-														e.stopPropagation();
-														setMenuOpenId((id) => (id === session.id ? null : session.id));
-													}}
-													className={`flex items-center justify-center w-7 h-full rounded-r-lg transition-opacity ${showMore ? "opacity-100" : "opacity-0"}`}
-													style={{ color: "var(--color-text-muted)" }}
-													title="More options"
-													aria-label="More options"
-												>
-													<MoreHorizontalIcon />
-												</button>
-												{isMenuOpen && (
-													<div
-														className="absolute top-full right-0 z-50 mt-0.5 py-1 rounded-lg shadow-lg border whitespace-nowrap"
-														style={{
-															background: "var(--color-surface)",
-															borderColor: "var(--color-border)",
-														}}
+											<div className={`shrink-0 flex items-center pr-1 transition-opacity ${showMore ? "opacity-100" : "opacity-0"}`}>
+												<DropdownMenu>
+													<DropdownMenuTrigger
+														onClick={(e) => e.stopPropagation()}
+														className="flex items-center justify-center w-6 h-6 rounded-md"
+														style={{ color: "var(--color-text-muted)" }}
+														title="More options"
+														aria-label="More options"
 													>
-														<button
-															type="button"
-															onClick={(e) => handleDeleteSession(session.id, e)}
-															className="w-full text-left px-3 py-1.5 text-xs transition-colors rounded-md hover:opacity-90"
-															style={{
-																color: "var(--color-error)",
-																background: "transparent",
-															}}
+														<MoreHorizontalIcon />
+													</DropdownMenuTrigger>
+													<DropdownMenuContent align="end" side="bottom">
+														<DropdownMenuItem
+															variant="destructive"
+															onSelect={() => handleDeleteSession(session.id)}
 														>
 															Delete
-														</button>
-													</div>
-												)}
+														</DropdownMenuItem>
+													</DropdownMenuContent>
+												</DropdownMenu>
 											</div>
 										)}
 									</div>
