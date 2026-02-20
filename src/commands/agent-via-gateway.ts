@@ -132,8 +132,6 @@ export async function agentViaGatewayCommand(opts: AgentCliOpts, runtime: Runtim
   const channel = normalizeMessageChannel(opts.channel) ?? DEFAULT_CHAT_CHANNEL;
   const idempotencyKey = opts.runId?.trim() || randomIdempotencyKey();
 
-  const workspaceOverride = process.env.OPENCLAW_WORKSPACE?.trim() || undefined;
-
   const response = await withProgress(
     {
       label: "Waiting for agent reply…",
@@ -159,7 +157,6 @@ export async function agentViaGatewayCommand(opts: AgentCliOpts, runtime: Runtim
           lane: opts.lane,
           extraSystemPrompt: opts.extraSystemPrompt,
           idempotencyKey,
-          workspace: workspaceOverride,
         },
         expectFinal: true,
         timeoutMs: gatewayTimeoutMs,
@@ -243,8 +240,6 @@ async function agentViaGatewayStreamJson(opts: AgentCliOpts, _runtime: RuntimeEn
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
 
-  const streamWorkspaceOverride = process.env.OPENCLAW_WORKSPACE?.trim() || undefined;
-
   try {
     const response = await callGateway<GatewayAgentResponse>({
       method: "agent",
@@ -264,7 +259,6 @@ async function agentViaGatewayStreamJson(opts: AgentCliOpts, _runtime: RuntimeEn
         lane: opts.lane,
         extraSystemPrompt: opts.extraSystemPrompt,
         idempotencyKey,
-        workspace: streamWorkspaceOverride,
       },
       expectFinal: true,
       timeoutMs: gatewayTimeoutMs,

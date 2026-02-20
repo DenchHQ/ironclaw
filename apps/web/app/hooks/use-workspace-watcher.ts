@@ -9,8 +9,6 @@ export type TreeNode = {
   icon?: string;
   defaultView?: "table" | "kanban";
   children?: TreeNode[];
-  /** True when the entry is a symbolic link. */
-  symlink?: boolean;
 };
 
 /**
@@ -32,9 +30,6 @@ export function useWorkspaceWatcher() {
   const [openclawDir, setOpenclawDir] = useState<string | null>(null);
   const [activeProfile, setActiveProfile] = useState<string | null>(null);
 
-  // Show hidden (dot) files/folders
-  const [showHidden, setShowHidden] = useState(false);
-
   const mountedRef = useRef(true);
   const retryDelayRef = useRef(1000);
   // Version counter: prevents stale fetch responses from overwriting newer data.
@@ -49,8 +44,7 @@ export function useWorkspaceWatcher() {
   const fetchWorkspaceTree = useCallback(async () => {
     const version = ++fetchVersionRef.current;
     try {
-      const qs = showHidden ? "?showHidden=1" : "";
-      const res = await fetch(`/api/workspace/tree${qs}`);
+      const res = await fetch("/api/workspace/tree");
       const data = await res.json();
       if (mountedRef.current && fetchVersionRef.current === version) {
         setTree(data.tree ?? []);
@@ -63,15 +57,14 @@ export function useWorkspaceWatcher() {
     } catch {
       if (mountedRef.current && fetchVersionRef.current === version) {setLoading(false);}
     }
-  }, [showHidden]);
+  }, []);
 
   // Fetch a directory listing from the browse API
   const fetchBrowseTree = useCallback(async (dir: string) => {
     const version = ++fetchVersionRef.current;
     try {
       setLoading(true);
-      const hiddenQs = showHidden ? "&showHidden=1" : "";
-      const res = await fetch(`/api/workspace/browse?dir=${encodeURIComponent(dir)}${hiddenQs}`);
+      const res = await fetch(`/api/workspace/browse?dir=${encodeURIComponent(dir)}`);
       const data = await res.json();
       if (mountedRef.current && fetchVersionRef.current === version) {
         setTree(data.entries ?? []);
@@ -82,7 +75,7 @@ export function useWorkspaceWatcher() {
     } catch {
       if (mountedRef.current && fetchVersionRef.current === version) {setLoading(false);}
     }
-  }, [showHidden]);
+  }, []);
 
   // Smart setBrowseDir: auto-return to workspace mode when navigating to the
   // workspace root, so all virtual folders (Chats, Cron, etc.) and DuckDB
@@ -218,5 +211,5 @@ export function useWorkspaceWatcher() {
     };
   }, [browseDirRaw, fetchWorkspaceTree, sseReconnectKey]);
 
-  return { tree, loading, exists, refresh, reconnect, browseDir, setBrowseDir, parentDir, workspaceRoot, openclawDir, activeProfile, showHidden, setShowHidden };
+  return { tree, loading, exists, refresh, reconnect, browseDir, setBrowseDir, parentDir, workspaceRoot, openclawDir, activeProfile };
 }

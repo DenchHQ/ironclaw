@@ -28,8 +28,6 @@ export type TreeNode = {
   children?: TreeNode[];
   /** When true, the node represents a virtual folder/file outside the real workspace (e.g. Skills, Memories). CRUD ops are disabled. */
   virtual?: boolean;
-  /** True when the entry is a symbolic link / shortcut. */
-  symlink?: boolean;
 };
 
 /** Folder names reserved for virtual sections -- cannot be created/renamed to. */
@@ -151,14 +149,6 @@ function LockBadge() {
   return (
     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
       <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </svg>
-  );
-}
-
-function SymlinkBadge() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.55 }}>
-      <path d="m9 18 6-6-6-6" />
     </svg>
   );
 }
@@ -570,13 +560,6 @@ function DraggableNode({
         {isProtected && !isWorkspaceRoot && !compact && (
           <span className="flex-shrink-0 ml-1">
             <LockBadge />
-          </span>
-        )}
-
-        {/* Symlink indicator */}
-        {node.symlink && !compact && (
-          <span className="flex-shrink-0 ml-0.5" title="Symbolic link" style={{ color: "var(--color-text-muted)" }}>
-            <SymlinkBadge />
           </span>
         )}
 

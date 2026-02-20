@@ -18,8 +18,6 @@ const MIME_MAP: Record<string, string> = {
 	wav: "audio/wav",
 	ogg: "audio/ogg",
 	pdf: "application/pdf",
-	html: "text/html",
-	htm: "text/html",
 };
 
 /** Extensions recognized as code files for syntax-highlighted viewing. */

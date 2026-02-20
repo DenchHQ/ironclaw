@@ -22,11 +22,9 @@ type ProfileSwitcherProps = {
   onCreateWorkspace?: () => void;
   /** When set, this renders instead of the default button; dropdown still opens below. */
   trigger?: (props: ProfileSwitcherTriggerProps) => React.ReactNode;
-  /** Parent-tracked active profile — triggers a re-fetch when it changes (e.g. after workspace creation). */
-  activeProfileHint?: string | null;
 };
 
-export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace, trigger, activeProfileHint }: ProfileSwitcherProps) {
+export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace, trigger }: ProfileSwitcherProps) {
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [activeProfile, setActiveProfile] = useState("default");
   const [isOpen, setIsOpen] = useState(false);
@@ -46,7 +44,7 @@ export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace, trigger, a
 
   useEffect(() => {
     void fetchProfiles();
-  }, [fetchProfiles, activeProfileHint]);
+  }, [fetchProfiles]);
 
   // Close dropdown on outside click
   useEffect(() => {

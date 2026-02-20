@@ -265,28 +265,12 @@ export function buildWorkspaceSkillSnapshot(
   const remoteNote = opts?.eligibility?.remote?.note?.trim();
   const prompt = [remoteNote, formatSkillsForPrompt(resolvedSkills)].filter(Boolean).join("\n");
 
-  // Read full content of injected skills, substituting workspace path placeholders.
-  // We replace both the tilde form and the expanded default path to handle
-  // cases where the replacement target is a profile-specific workspace dir.
-  //
-  // Use regex with a negative lookahead so "~/.openclaw/workspace" doesn't
-  // match inside "~/.openclaw/workspace-<profile>", which would double the
-  // profile suffix (e.g. workspace-kumareth → workspace-kumareth-kumareth).
-  const defaultExpandedWorkspace = resolveUserPath("~/.openclaw/workspace");
-  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const tildePattern = new RegExp(escapeRegex("~/.openclaw/workspace") + "(?![\\w-])", "g");
+  // Read full content of injected skills, substituting workspace path placeholders
   const injectedSkills: InjectedSkillContent[] = [];
   for (const entry of injectedEntries) {
     const rawContent = readSkillContent(entry.skill.filePath);
     if (rawContent) {
-      let content = rawContent.replace(tildePattern, workspaceDir);
-      if (workspaceDir !== defaultExpandedWorkspace) {
-        const expandedPattern = new RegExp(
-          escapeRegex(defaultExpandedWorkspace) + "(?![\\w-])",
-          "g",
-        );
-        content = content.replace(expandedPattern, workspaceDir);
-      }
+      const content = rawContent.replaceAll("~/.openclaw/workspace", workspaceDir);
       injectedSkills.push({ name: entry.skill.name, content });
     }
   }
@@ -300,7 +284,6 @@ export function buildWorkspaceSkillSnapshot(
     resolvedSkills,
     injectedSkills: injectedSkills.length > 0 ? injectedSkills : undefined,
     version: opts?.snapshotVersion,
-    workspaceDir,
   };
 }
 
