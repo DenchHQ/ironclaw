@@ -671,7 +671,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onS
 		return (
 			<div className="flex justify-end py-2">
 				<div
-					className="font-bookerly max-w-[80%] min-w-0 rounded-2xl rounded-br-sm px-3 py-2 text-sm leading-6 overflow-hidden break-all"
+					className="max-w-[80%] min-w-0 rounded-2xl rounded-br-sm px-3 py-2 text-sm leading-6 overflow-hidden break-all chat-message-font"
 					style={{
 						background: "var(--color-user-bubble)",
 						color: "var(--color-user-bubble-text)",
@@ -721,7 +721,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onS
 						return (
 							<div
 								key={index}
-								className="font-bookerly flex items-start gap-2 rounded-xl px-3 py-2 text-[13px] leading-relaxed overflow-hidden"
+								className="chat-message-font flex items-start gap-2 rounded-xl px-3 py-2 text-[13px] leading-relaxed overflow-hidden"
 								style={{
 									background: `color-mix(in srgb, var(--color-error) 6%, var(--color-surface))`,
 									color: "var(--color-error)",
@@ -778,7 +778,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onS
 								initial={{ opacity: 0, y: 4 }}
 								animate={{ opacity: 1, y: 0 }}
 								transition={{ duration: 0.2, ease: "easeOut" }}
-								className="chat-prose font-bookerly text-sm whitespace-pre-wrap break-all"
+								className="chat-prose chat-message-font text-sm whitespace-pre-wrap break-all"
 								style={{ color: "var(--color-text)" }}
 							>
 								{segment.text}
@@ -792,7 +792,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onS
 				initial={{ opacity: 0, y: 4 }}
 				animate={{ opacity: 1, y: 0 }}
 				transition={{ duration: 0.2, ease: "easeOut" }}
-				className="chat-prose font-bookerly text-sm"
+				className="chat-prose chat-message-font text-sm"
 				style={{ color: "var(--color-text)" }}
 			>
 				<ReactMarkdown

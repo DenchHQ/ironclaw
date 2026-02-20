@@ -17,6 +17,7 @@ import {
 	type SelectedFile,
 } from "./file-picker-modal";
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
+import { UnicodeSpinner } from "./unicode-spinner";
 
 // ── Attachment types & helpers ──
 
@@ -486,6 +487,8 @@ type ChatPanelProps = {
 	onSubagentSpawned?: (info: SubagentSpawnInfo) => void;
 	/** Called when user clicks a subagent card in the chat to view its output. */
 	onSubagentClick?: (task: string) => void;
+	/** Called when user deletes the current session (e.g. from header menu). */
+	onDeleteSession?: (sessionId: string) => void;
 };
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
@@ -500,6 +503,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			onSessionsChange,
 			onSubagentSpawned,
 			onSubagentClick,
+			onDeleteSession,
 		},
 		ref,
 	) {
@@ -536,6 +540,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+
+		// ── Header menu (3-dots) ──
+		const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+		const headerMenuRef = useRef<HTMLDivElement>(null);
+		useEffect(() => {
+			function handleClickOutside(e: MouseEvent) {
+				if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
+					setHeaderMenuOpen(false);
+				}
+			}
+			if (headerMenuOpen) {
+				document.addEventListener("mousedown", handleClickOutside);
+				return () => document.removeEventListener("mousedown", handleClickOutside);
+			}
+		}, [headerMenuOpen]);
 
 		const filePath = fileContext?.path ?? null;
 
@@ -1193,6 +1212,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			isFirstFileMessageRef.current = true;
 			newSessionPendingRef.current = false;
 			setQueuedMessages([]);
+			// Focus the chat input after state updates so "New Chat" is ready to type.
+			requestAnimationFrame(() => {
+				editorRef.current?.focus();
+			});
 		}, [setMessages, onActiveSessionChange, stop]);
 
 		// Keep the ref in sync so handleEditorSubmit can call it
@@ -1332,21 +1355,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			[],
 		);
 
-		// ── Status label ──
-
-		const statusLabel = loadingSession
-			? "Loading session..."
-			: isReconnecting
-					? "Resuming stream..."
-					: status === "ready"
-						? "Ready"
-						: status === "submitted"
-							? "Thinking..."
-							: status === "streaming"
-								? "Streaming..."
-								: status === "error"
-									? "Error"
-									: status;
+		// Show an inline Unicode spinner in the message flow when the AI
+		// is thinking/streaming but hasn't produced visible text yet.
+		const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+		const lastAssistantHasText =
+			lastMsg?.role === "assistant" &&
+			lastMsg.parts.some((p) => p.type === "text" && (p as { text: string }).text.length > 0);
+		const showInlineSpinner = isStreaming && !lastAssistantHasText;
 
 		// ── Render ──
 
@@ -1365,48 +1380,80 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				>
 					<div className="min-w-0 flex-1">
 						{compact && fileContext ? (
-							<>
-								<h2
-									className="text-xs font-semibold truncate"
-									style={{
-										color: "var(--color-text)",
-									}}
-								>
-									Chat: {fileContext.filename}
-								</h2>
-								<p
-									className="text-[10px]"
-									style={{
-										color: "var(--color-text-muted)",
-									}}
-								>
-									{statusLabel}
-								</p>
-							</>
+							<h2
+								className="text-xs font-semibold truncate"
+								style={{
+									color: "var(--color-text)",
+								}}
+							>
+								Chat: {fileContext.filename}
+							</h2>
 						) : (
-							<>
-								<h2
-									className="text-sm font-semibold"
-									style={{
-										color: "var(--color-text)",
-									}}
-								>
-									{currentSessionId
-										? (sessionTitle || "Chat Session")
-										: "New Chat"}
-								</h2>
-								<p
-									className="text-xs"
-									style={{
-										color: "var(--color-text-muted)",
-									}}
-								>
-									{statusLabel}
-								</p>
-							</>
+							<h2
+								className="text-sm font-semibold"
+								style={{
+									color: "var(--color-text)",
+								}}
+							>
+								{currentSessionId
+									? (sessionTitle || "Chat Session")
+									: "New Chat"}
+							</h2>
 						)}
 					</div>
-					<div className="flex gap-1 shrink-0">
+					<div className="flex items-center gap-1 shrink-0" ref={headerMenuRef}>
+						{currentSessionId && onDeleteSession && (
+							<div className="relative">
+								<button
+									type="button"
+									onClick={() => setHeaderMenuOpen((open) => !open)}
+									className="p-1.5 rounded-lg"
+									style={{ color: "var(--color-text-muted)" }}
+									title="More options"
+									aria-label="More options"
+								>
+									<svg
+										width="16"
+										height="16"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+									>
+										<circle cx="12" cy="12" r="1" />
+										<circle cx="5" cy="12" r="1" />
+										<circle cx="19" cy="12" r="1" />
+									</svg>
+								</button>
+								{headerMenuOpen && (
+									<div
+										className="absolute right-0 top-full z-50 mt-0.5 py-1 rounded-lg shadow-lg border whitespace-nowrap"
+										style={{
+											background: "var(--color-surface)",
+											borderColor: "var(--color-border)",
+										}}
+									>
+										<button
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												setHeaderMenuOpen(false);
+												onDeleteSession(currentSessionId);
+											}}
+											className="w-full text-left px-3 py-2 text-sm transition-colors rounded-md hover:opacity-90"
+											style={{
+												color: "var(--color-error)",
+												background: "transparent",
+											}}
+										>
+											Delete
+										</button>
+									</div>
+								)}
+							</div>
+						)}
 						{compact && (
 							<button
 								type="button"
@@ -1482,14 +1529,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					{loadingSession ? (
 						<div className="flex items-center justify-center h-full min-h-[60vh]">
 							<div className="text-center">
-								<div
-									className="w-6 h-6 border-2 rounded-full animate-spin mx-auto mb-3"
-									style={{
-										borderColor:
-											"var(--color-border)",
-										borderTopColor:
-											"var(--color-accent)",
-									}}
+								<UnicodeSpinner
+									name="braille"
+									className="block text-2xl mx-auto mb-3"
+									style={{ color: "var(--color-text-muted)" }}
 								/>
 								<p
 									className="text-xs"
@@ -1549,6 +1592,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								onSubagentClick={onSubagentClick}
 							/>
 						))}
+						{showInlineSpinner && (
+							<div className="py-3 min-w-0">
+								<UnicodeSpinner
+									name="pulse"
+									className="text-base"
+									style={{ color: "var(--color-text-muted)" }}
+								/>
+							</div>
+						)}
 							<div ref={messagesEndRef} />
 						</div>
 					)}
@@ -1603,11 +1655,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					>
 						<div
 							data-chat-drop-target=""
-							className="rounded-3xl overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow] duration-150 ease-out data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!"
+							className="rounded-3xl overflow-hidden border-2 shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow] duration-150 ease-out data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!"
 							style={{
-								background:
-									"var(--color-chat-input-bg)",
-								borderColor: "var(--color-border)",
+								background: "var(--color-surface)",
+								borderColor: "var(--color-border-strong)",
 							}}
 						onDragOver={(e) => {
 							if (
@@ -1656,43 +1707,45 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						>
 						{/* Queued messages indicator */}
 						{queuedMessages.length > 0 && (
-                            <div className={compact ? "px-2 pt-2" : "px-3 pt-3"}>
+							<div className={compact ? "px-2 pt-2" : "px-3 pt-3"}>
 								<div
-									className="rounded-xl overflow-hidden"
+									className="rounded-xl border overflow-hidden"
 									style={{
-										border: "1px dashed var(--color-border-strong)",
-										background: "var(--color-bg-elevated)",
+										background: "var(--color-surface)",
+										borderColor: "var(--color-border)",
+										boxShadow: "var(--shadow-sm)",
 									}}
 								>
 									<div
-										className="flex items-center justify-between px-3 py-1.5"
-										style={{ borderBottom: "1px solid var(--color-border)" }}
+										className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+										style={{ color: "var(--color-text-muted)", background: "var(--color-surface-hover)" }}
 									>
-										<span
-											className="text-[11px] font-medium tracking-wide uppercase"
-											style={{ color: "var(--color-text-muted)", fontFamily: "var(--font-mono, monospace)" }}
-										>
-											Queued ({queuedMessages.length})
-										</span>
+										Queue ({queuedMessages.length})
 									</div>
-									<div className="flex flex-col gap-1 p-1.5">
-										{queuedMessages.map((msg) => (
+									<div className="flex flex-col p-2">
+										{queuedMessages.map((msg, idx) => (
 											<div
 												key={msg.id}
-												className="flex items-start gap-2 rounded-lg px-2.5 py-2 group"
-												style={{ background: "var(--color-bg-secondary)" }}
+												className={`flex items-start gap-2.5 group py-2 ${idx > 0 ? "border-t" : ""}`}
+												style={idx > 0 ? { borderColor: "var(--color-border)" } : undefined}
 											>
+												<span
+													className="shrink-0 mt-px text-[11px] font-medium tabular-nums w-4"
+													style={{ color: "var(--color-text-muted)" }}
+												>
+													{idx + 1}
+												</span>
 												<p
-													className="flex-1 text-[13px] leading-[1.45] line-clamp-3"
-													style={{ color: "var(--color-text)", whiteSpace: "pre-wrap" }}
+													className="flex-1 text-[13px] leading-[1.45] line-clamp-2 min-w-0"
+													style={{ color: "var(--color-text-secondary)", whiteSpace: "pre-wrap" }}
 												>
 													{msg.text || (msg.attachedFiles.length > 0 ? `${msg.attachedFiles.length} file(s)` : "")}
 												</p>
-												<div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+												<div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
 													<button
 														type="button"
-														className="rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors hover:bg-[var(--color-bg)]"
-														style={{ color: "var(--color-accent)" }}
+														className="rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+														style={{ color: "var(--color-accent)", background: "var(--color-accent-light)" }}
 														title="Stop agent and send this message now"
 														onClick={() => forceSendQueuedMessage(msg.id)}
 													>
@@ -1700,12 +1753,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 													</button>
 													<button
 														type="button"
-														className="rounded-md p-1 transition-colors hover:bg-[var(--color-bg)]"
+														className="rounded-md p-0.5 transition-colors hover:opacity-80"
 														style={{ color: "var(--color-text-muted)" }}
 														title="Remove from queue"
 														onClick={() => removeQueuedMessage(msg.id)}
 													>
-														<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+														<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
 															<path d="M18 6 6 18" />
 															<path d="m6 6 12 12" />
 														</svg>
@@ -1818,14 +1871,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 												attachedFiles.length === 0) ||
 											loadingSession
 										}
-										className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed`}
+										className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
 										style={{
 											background:
 												!editorEmpty ||
 												attachedFiles.length > 0
 													? "var(--color-accent)"
-													: "var(--color-border-strong)",
-											color: "white",
+													: "var(--color-text-muted)",
+											color:
+												!editorEmpty || attachedFiles.length > 0
+													? "white"
+													: "var(--color-bg)",
 										}}
 										title="Send message"
 									>

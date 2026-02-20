@@ -396,7 +396,7 @@ export const ChatEditor = forwardRef<ChatEditorHandle, ChatEditorProps>(
 				<style>{`
 					.chat-editor-content {
 						outline: none;
-						min-height: 20px;
+						min-height: ${compact ? "16px" : "28px"};
 						max-height: 200px;
 						overflow-y: auto;
 						padding: ${compact ? "10px 12px" : "14px 16px"};

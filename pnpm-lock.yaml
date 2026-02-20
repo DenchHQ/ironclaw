@@ -392,6 +392,9 @@ importers:
       shiki:
         specifier: ^3.22.0
         version: 3.22.0
+      unicode-animations:
+        specifier: ^1.0.3
+        version: 1.0.3
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.1.8
@@ -6827,6 +6830,10 @@ packages:
   undici@7.22.0:
     resolution: {integrity: sha512-RqslV2Us5BrllB+JeiZnK4peryVTndy9Dnqq62S3yYRRTj0tFQCwEniUy2167skdGOy3vqRzEvl1Dm4sV2ReDg==}
     engines: {node: '>=20.18.1'}
+
+  unicode-animations@1.0.3:
+    resolution: {integrity: sha512-+klB2oWwcYZjYWhwP4Pr8UZffWDFVx6jKeIahE6z0QYyM2dwDeDPyn5nevCYbyotxvtT9lh21cVURO1RX0+YMg==}
+    hasBin: true
 
   unified@11.0.5:
     resolution: {integrity: sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==}
@@ -14177,6 +14184,8 @@ snapshots:
   undici-types@7.16.0: {}
 
   undici@7.22.0: {}
+
+  unicode-animations@1.0.3: {}
 
   unified@11.0.5:
     dependencies:

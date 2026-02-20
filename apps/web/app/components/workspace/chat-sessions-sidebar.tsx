@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { UnicodeSpinner } from "../unicode-spinner";
 
 type WebSession = {
 	id: string;
@@ -40,6 +41,10 @@ type ChatSessionsSidebarProps = {
 	onClose?: () => void;
 	/** Fixed width in px when not mobile (overrides default 260). */
 	width?: number;
+	/** Called when the user deletes a session from the sidebar menu. */
+	onDeleteSession?: (sessionId: string) => void;
+	/** When true, show a loader instead of empty state (e.g. initial sessions fetch). */
+	loading?: boolean;
 };
 
 /** Format a timestamp into a human-readable relative time string. */
@@ -113,6 +118,25 @@ function ChatBubbleIcon() {
 	);
 }
 
+function MoreHorizontalIcon() {
+	return (
+		<svg
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<circle cx="12" cy="12" r="1" />
+			<circle cx="5" cy="12" r="1" />
+			<circle cx="19" cy="12" r="1" />
+		</svg>
+	);
+}
+
 export function ChatSessionsSidebar({
 	sessions,
 	activeSessionId,
@@ -123,11 +147,28 @@ export function ChatSessionsSidebar({
 	onSelectSession,
 	onNewSession,
 	onSelectSubagent,
+	onDeleteSession,
 	mobile,
 	onClose,
 	width: widthProp,
+	loading = false,
 }: ChatSessionsSidebarProps) {
 	const [hoveredId, setHoveredId] = useState<string | null>(null);
+	const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+	const menuRef = useRef<HTMLDivElement>(null);
+
+	// Close menu on outside click
+	useEffect(() => {
+		function handleClickOutside(e: MouseEvent) {
+			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+				setMenuOpenId(null);
+			}
+		}
+		if (menuOpenId !== null) {
+			document.addEventListener("mousedown", handleClickOutside);
+			return () => document.removeEventListener("mousedown", handleClickOutside);
+		}
+	}, [menuOpenId]);
 
 	const handleSelect = useCallback(
 		(id: string) => {
@@ -143,6 +184,15 @@ export function ChatSessionsSidebar({
 			onClose?.();
 		},
 		[onSelectSubagent, onClose],
+	);
+
+	const handleDeleteSession = useCallback(
+		(sessionId: string, e: React.MouseEvent) => {
+			e.stopPropagation();
+			setMenuOpenId(null);
+			onDeleteSession?.(sessionId);
+		},
+		[onDeleteSession],
 	);
 
 	// Index subagents by parent session ID
@@ -164,45 +214,39 @@ export function ChatSessionsSidebar({
 	const grouped = groupSessions(sessions);
 
 	const width = mobile ? "280px" : (widthProp ?? 260);
+	const headerHeight = 40; // px — match padding so list content clears the overlay
 	const sidebar = (
 		<aside
-			className={`flex flex-col h-full flex-shrink-0 ${mobile ? "drawer-right" : "border-l"}`}
+			className={`flex flex-col h-full shrink-0 ${mobile ? "drawer-right" : "border-l"}`}
 			style={{
 				width: typeof width === "number" ? `${width}px` : width,
+				minWidth: typeof width === "number" ? `${width}px` : width,
 				borderColor: "var(--color-border)",
 				background: "var(--color-surface)",
 			}}
 		>
-			<div
-				className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
-				style={{ borderColor: "var(--color-border)" }}
-			>
-				<div className="min-w-0 flex-1">
-					<span
-						className="text-sm font-medium truncate block"
-						style={{ color: "var(--color-text)" }}
-					>
-						Chats
-					</span>
-				</div>
-				<button
-					type="button"
-					onClick={onNewSession}
-					className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer flex-shrink-0 ml-2"
-					style={{
-						color: "var(--color-accent)",
-						background: "var(--color-accent-light)",
-					}}
-					title="New chat"
+			{/* Scrollable list fills the sidebar; header overlays the top with blur */}
+			<div className="flex-1 min-h-0 relative">
+				{/* Session list — scrolls under the header */}
+				<div
+					className="absolute inset-0 overflow-y-auto"
+					style={{ paddingTop: headerHeight }}
 				>
-					<PlusIcon />
-					New
-				</button>
-			</div>
-
-			{/* Session list */}
-			<div className="flex-1 overflow-y-auto">
-				{sessions.length === 0 ? (
+				{loading && sessions.length === 0 ? (
+					<div className="px-4 py-8 flex flex-col items-center justify-center min-h-[120px]">
+						<UnicodeSpinner
+							name="braille"
+							className="text-xl mb-2"
+							style={{ color: "var(--color-text-muted)" }}
+						/>
+						<p
+							className="text-xs"
+							style={{ color: "var(--color-text-muted)" }}
+						>
+							Loading…
+						</p>
+					</div>
+				) : sessions.length === 0 ? (
 					<div className="px-4 py-8 text-center">
 						<div
 							className="mx-auto w-10 h-10 rounded-xl flex items-center justify-center mb-3"
@@ -235,68 +279,109 @@ export function ChatSessionsSidebar({
 							{group.sessions.map((session) => {
 								const isActive = session.id === activeSessionId && !activeSubagentKey;
 								const isHovered = session.id === hoveredId;
+								const isMenuOpen = menuOpenId === session.id;
+								const showMore = isHovered || isMenuOpen;
 								const isStreamingSession = streamingSessionIds?.has(session.id) ?? false;
 								const sessionSubagents = subagentsByParent.get(session.id);
 								return (
-									<div key={session.id}>
-									<button
-										type="button"
-										onClick={() => handleSelect(session.id)}
+									<div
+										key={session.id}
+										ref={isMenuOpen ? menuRef : undefined}
+										className="group relative"
 										onMouseEnter={() => setHoveredId(session.id)}
 										onMouseLeave={() => setHoveredId(null)}
-										className="w-full text-left px-2 py-2 rounded-lg transition-colors cursor-pointer"
+									>
+									<div
+										className="flex items-stretch w-full rounded-lg"
 										style={{
 											background: isActive
-												? "var(--color-accent-light)"
+												? "var(--color-chat-sidebar-active-bg)"
 												: isHovered
 													? "var(--color-surface-hover)"
 													: "transparent",
 										}}
 									>
-										<div className="flex items-center gap-1.5">
-											{isStreamingSession && (
-												<span
-													className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse"
-													style={{ background: "var(--color-accent)" }}
-													title="Agent is running"
-												/>
-											)}
-											<div
-												className="text-xs font-medium truncate"
-												style={{
-													color: isActive
-														? "var(--color-accent)"
-														: "var(--color-text)",
-												}}
-											>
-												{session.title || "Untitled chat"}
-											</div>
-										</div>
-										<div className="flex items-center gap-2 mt-0.5" style={{ paddingLeft: isStreamingSession ? "calc(0.375rem + 6px)" : undefined }}>
-											{isStreamingSession && (
-												<span
-													className="text-[10px] font-medium"
-													style={{ color: "var(--color-accent)" }}
+										<button
+											type="button"
+											onClick={() => handleSelect(session.id)}
+											className="flex-1 min-w-0 text-left px-2 py-2 rounded-l-lg transition-colors cursor-pointer"
+										>
+											<div className="flex items-center gap-1.5">
+												{isStreamingSession && (
+													<UnicodeSpinner
+														name="braille"
+														className="text-[10px] flex-shrink-0"
+														style={{ color: "var(--color-chat-sidebar-muted)" }}
+													/>
+												)}
+												<div
+													className="text-xs font-medium truncate"
+													style={{
+														color: isActive
+															? "var(--color-chat-sidebar-active-text)"
+															: "var(--color-text)",
+													}}
 												>
-													Streaming
-												</span>
-											)}
-											<span
-												className="text-[10px]"
-												style={{ color: "var(--color-text-muted)" }}
-											>
-												{timeAgo(session.updatedAt)}
-											</span>
-											{session.messageCount > 0 && (
+													{session.title || "Untitled chat"}
+												</div>
+											</div>
+											<div className="flex items-center gap-2 mt-0.5" style={{ paddingLeft: isStreamingSession ? "calc(0.375rem + 6px)" : undefined }}>
+												
 												<span
 													className="text-[10px]"
 													style={{ color: "var(--color-text-muted)" }}
 												>
-													{session.messageCount} msg{session.messageCount !== 1 ? "s" : ""}
+													{timeAgo(session.updatedAt)}
 												</span>
-											)}
-										</div>
-									</button>
+												{session.messageCount > 0 && (
+													<span
+														className="text-[10px]"
+														style={{ color: "var(--color-text-muted)" }}
+													>
+														{session.messageCount} msg{session.messageCount !== 1 ? "s" : ""}
+													</span>
+												)}
+											</div>
+										</button>
+										{onDeleteSession && (
+											<div className="relative w-7 shrink-0 flex flex-col items-end">
+												<button
+													type="button"
+													onClick={(e) => {
+														e.stopPropagation();
+														setMenuOpenId((id) => (id === session.id ? null : session.id));
+													}}
+													className={`flex items-center justify-center w-7 h-full rounded-r-lg transition-opacity ${showMore ? "opacity-100" : "opacity-0"}`}
+													style={{ color: "var(--color-text-muted)" }}
+													title="More options"
+													aria-label="More options"
+												>
+													<MoreHorizontalIcon />
+												</button>
+												{isMenuOpen && (
+													<div
+														className="absolute top-full right-0 z-50 mt-0.5 py-1 rounded-lg shadow-lg border whitespace-nowrap"
+														style={{
+															background: "var(--color-surface)",
+															borderColor: "var(--color-border)",
+														}}
+													>
+														<button
+															type="button"
+															onClick={(e) => handleDeleteSession(session.id, e)}
+															className="w-full text-left px-3 py-1.5 text-xs transition-colors rounded-md hover:opacity-90"
+															style={{
+																color: "var(--color-error)",
+																background: "transparent",
+															}}
+														>
+															Delete
+														</button>
+													</div>
+												)}
+											</div>
+										)}
+									</div>
 									{/* Subagent sub-items */}
 									{sessionSubagents && sessionSubagents.length > 0 && (
 										<div className="ml-4 border-l" style={{ borderColor: "var(--color-border)" }}>
@@ -313,16 +398,16 @@ export function ChatSessionsSidebar({
 														className="w-full text-left pl-3 pr-2 py-1.5 rounded-r-lg transition-colors cursor-pointer"
 														style={{
 															background: isSubActive
-																? "var(--color-accent-light)"
+																? "var(--color-chat-sidebar-active-bg)"
 																: "transparent",
 														}}
 													>
 														<div className="flex items-center gap-1.5">
 															{isSubRunning && (
-																<span
-																	className="inline-block w-1 h-1 rounded-full flex-shrink-0 animate-pulse"
-																	style={{ background: "var(--color-accent)" }}
-																	title="Subagent running"
+																<UnicodeSpinner
+																	name="braille"
+																	className="text-[9px] flex-shrink-0"
+																	style={{ color: "var(--color-chat-sidebar-muted)" }}
 																/>
 															)}
 															<SubagentIcon />
@@ -330,7 +415,7 @@ export function ChatSessionsSidebar({
 																className="text-[11px] truncate"
 																style={{
 																	color: isSubActive
-																		? "var(--color-accent)"
+																		? "var(--color-chat-sidebar-active-text)"
 																		: "var(--color-text-muted)",
 																}}
 															>
@@ -350,6 +435,38 @@ export function ChatSessionsSidebar({
 					</div>
 				)}
 			</div>
+			{/* Header overlay: backdrop blur + 80% bg; list scrolls under it */}
+			<div
+				className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between border-b px-4 py-2 backdrop-blur-md"
+				style={{
+					height: headerHeight,
+					borderColor: "var(--color-border)",
+					background: "color-mix(in srgb, var(--color-surface) 80%, transparent)",
+				}}
+			>
+				<div className="min-w-0 flex-1">
+					<span
+						className="text-xs font-medium truncate block"
+						style={{ color: "var(--color-text)" }}
+					>
+						Chats
+					</span>
+				</div>
+				<button
+					type="button"
+					onClick={onNewSession}
+					className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer shrink-0 ml-1.5"
+					style={{
+						color: "var(--color-chat-sidebar-active-text)",
+						background: "var(--color-chat-sidebar-active-bg)",
+					}}
+					title="New chat"
+				>
+					<PlusIcon />
+					New
+				</button>
+			</div>
+		</div>
 		</aside>
 	);
 

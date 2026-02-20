@@ -841,7 +841,7 @@ function FetchGroup({ items }: { items: ToolPart[] }) {
 				<div
 					className="rounded-2xl overflow-hidden"
 					style={{
-						background: "rgba(255, 255, 255, 0.5)",
+						background: "var(--color-surface)",
 						border: "1px solid var(--color-border)",
 					}}
 				>

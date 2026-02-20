@@ -28,6 +28,7 @@ import type { CronJob, CronJobsResponse } from "../types/cron";
 import { useIsMobile } from "../hooks/use-mobile";
 import { ObjectFilterBar } from "../components/workspace/object-filter-bar";
 import { type FilterGroup, type SortRule, type SavedView, emptyFilterGroup, serializeFilters } from "@/lib/object-filters";
+import { UnicodeSpinner } from "../components/unicode-spinner";
 
 // --- Types ---
 
@@ -278,7 +279,7 @@ export default function WorkspacePage() {
   return (
     <Suspense fallback={
       <div className="flex h-screen items-center justify-center" style={{ background: "var(--color-bg)" }}>
-        <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: "var(--color-border)", borderTopColor: "var(--color-accent)" }} />
+        <UnicodeSpinner name="braille" className="text-2xl" style={{ color: "var(--color-text-muted)" }} />
       </div>
     }>
       <WorkspacePageInner />
@@ -319,6 +320,7 @@ function WorkspacePageInner() {
   // Chat session state
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<WebSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [streamingSessionIds, setStreamingSessionIds] = useState<Set<string>>(new Set());
 
@@ -376,19 +378,22 @@ function WorkspacePageInner() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatSessionsOpen, setChatSessionsOpen] = useState(false);
 
-  // Resizable sidebar widths (desktop only; persisted in localStorage)
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState(() => {
-    if (typeof window === "undefined") {return 260;}
-    const v = window.localStorage.getItem(STORAGE_LEFT);
-    const n = v ? parseInt(v, 10) : NaN;
-    return Number.isFinite(n) ? clamp(n, LEFT_SIDEBAR_MIN, LEFT_SIDEBAR_MAX) : 260;
-  });
-  const [rightSidebarWidth, setRightSidebarWidth] = useState(() => {
-    if (typeof window === "undefined") {return 320;}
-    const v = window.localStorage.getItem(STORAGE_RIGHT);
-    const n = v ? parseInt(v, 10) : NaN;
-    return Number.isFinite(n) ? clamp(n, RIGHT_SIDEBAR_MIN, RIGHT_SIDEBAR_MAX) : 320;
-  });
+  // Resizable sidebar widths (desktop only; persisted in localStorage).
+  // Use static defaults so server and client match on first render (avoid hydration mismatch).
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(260);
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(320);
+  useEffect(() => {
+    const left = window.localStorage.getItem(STORAGE_LEFT);
+    const nLeft = left ? parseInt(left, 10) : NaN;
+    if (Number.isFinite(nLeft)) {
+      setLeftSidebarWidth(clamp(nLeft, LEFT_SIDEBAR_MIN, LEFT_SIDEBAR_MAX));
+    }
+    const right = window.localStorage.getItem(STORAGE_RIGHT);
+    const nRight = right ? parseInt(right, 10) : NaN;
+    if (Number.isFinite(nRight)) {
+      setRightSidebarWidth(clamp(nRight, RIGHT_SIDEBAR_MIN, RIGHT_SIDEBAR_MAX));
+    }
+  }, []);
   useEffect(() => {
     window.localStorage.setItem(STORAGE_LEFT, String(leftSidebarWidth));
   }, [leftSidebarWidth]);
@@ -436,12 +441,15 @@ function WorkspacePageInner() {
 
   // Fetch chat sessions
   const fetchSessions = useCallback(async () => {
+    setSessionsLoading(true);
     try {
       const res = await fetch("/api/web-sessions");
       const data = await res.json();
       setSessions(data.sessions ?? []);
     } catch {
       // ignore
+    } finally {
+      setSessionsLoading(false);
     }
   }, []);
 
@@ -452,6 +460,27 @@ function WorkspacePageInner() {
   const refreshSessions = useCallback(() => {
     setSidebarRefreshKey((k) => k + 1);
   }, []);
+
+  const handleDeleteSession = useCallback(
+    async (sessionId: string) => {
+      const res = await fetch(`/api/web-sessions/${sessionId}`, { method: "DELETE" });
+      if (!res.ok) {return;}
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(null);
+        setActiveSubagentKey(null);
+        const remaining = sessions.filter((s) => s.id !== sessionId);
+        if (remaining.length > 0) {
+          const next = remaining[0];
+          setActiveSessionId(next.id);
+          void chatRef.current?.loadSession(next.id);
+        } else {
+          void chatRef.current?.newSession();
+        }
+      }
+      void fetchSessions();
+    },
+    [activeSessionId, sessions, fetchSessions],
+  );
 
   // Poll for active (streaming) agent runs so the sidebar can show indicators.
   useEffect(() => {
@@ -1039,7 +1068,10 @@ function WorkspacePageInner() {
         )
       ) : (
         <>
-          <div className="flex shrink-0 flex-col" style={{ width: leftSidebarWidth }}>
+          <div
+            className="flex shrink-0 flex-col"
+            style={{ width: leftSidebarWidth, minWidth: leftSidebarWidth }}
+          >
             <WorkspaceSidebar
               tree={enhancedTree}
               activePath={activePath}
@@ -1200,6 +1232,7 @@ function WorkspacePageInner() {
                   onSessionsChange={refreshSessions}
                   onSubagentSpawned={handleSubagentSpawned}
                   onSubagentClick={handleSubagentClickFromChat}
+                  onDeleteSession={handleDeleteSession}
                   compact={isMobile}
                 />
                 )}
@@ -1214,6 +1247,7 @@ function WorkspacePageInner() {
                     streamingSessionIds={streamingSessionIds}
                     subagents={subagents}
                     activeSubagentKey={activeSubagentKey}
+                    loading={sessionsLoading}
                     onSelectSession={(sessionId) => {
                       setActiveSessionId(sessionId);
                       setActiveSubagentKey(null);
@@ -1227,6 +1261,7 @@ function WorkspacePageInner() {
                       setChatSessionsOpen(false);
                     }}
                     onSelectSubagent={handleSelectSubagent}
+                    onDeleteSession={handleDeleteSession}
                     mobile
                     onClose={() => setChatSessionsOpen(false)}
                   />
@@ -1240,7 +1275,10 @@ function WorkspacePageInner() {
                     max={RIGHT_SIDEBAR_MAX}
                     onResize={setRightSidebarWidth}
                   />
-                  <div className="flex shrink-0 flex-col" style={{ width: rightSidebarWidth }}>
+                  <div
+                    className="flex shrink-0 flex-col"
+                    style={{ width: rightSidebarWidth, minWidth: rightSidebarWidth }}
+                  >
                     <ChatSessionsSidebar
                       sessions={sessions}
                       activeSessionId={activeSessionId}
@@ -1248,6 +1286,7 @@ function WorkspacePageInner() {
                       streamingSessionIds={streamingSessionIds}
                       subagents={subagents}
                       activeSubagentKey={activeSubagentKey}
+                      loading={sessionsLoading}
                       onSelectSession={(sessionId) => {
                         setActiveSessionId(sessionId);
                         setActiveSubagentKey(null);
@@ -1260,6 +1299,7 @@ function WorkspacePageInner() {
                         router.replace("/workspace", { scroll: false });
                       }}
                       onSelectSubagent={handleSelectSubagent}
+                      onDeleteSession={handleDeleteSession}
                       width={rightSidebarWidth}
                     />
                   </div>
@@ -1388,13 +1428,7 @@ function ContentRenderer({
     case "loading":
       return (
         <div className="flex items-center justify-center h-full">
-          <div
-            className="w-6 h-6 border-2 rounded-full animate-spin"
-            style={{
-              borderColor: "var(--color-border)",
-              borderTopColor: "var(--color-accent)",
-            }}
-          />
+          <UnicodeSpinner name="braille" className="text-2xl" style={{ color: "var(--color-text-muted)" }} />
         </div>
       );
 
@@ -1472,13 +1506,7 @@ function ContentRenderer({
       if (isBrowseLive && treeLoading) {
         return (
           <div className="flex items-center justify-center h-full">
-            <div
-              className="w-6 h-6 border-2 rounded-full animate-spin"
-              style={{
-                borderColor: "var(--color-border)",
-                borderTopColor: "var(--color-accent)",
-              }}
-            />
+            <UnicodeSpinner name="braille" className="text-2xl" style={{ color: "var(--color-text-muted)" }} />
           </div>
         );
       }

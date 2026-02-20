@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { FileManagerTree, type TreeNode } from "./file-manager-tree";
 import { ProfileSwitcher } from "./profile-switcher";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
+import { UnicodeSpinner } from "../unicode-spinner";
 
 /** Shape returned by /api/workspace/suggest-files */
 type SuggestItem = {
@@ -319,9 +320,10 @@ function FileSearch({ onSelect }: { onSelect: (item: SuggestItem) => void }) {
 				/>
 				{loading && (
 					<span className="absolute right-2.5 top-1/2 -translate-y-1/2">
-						<div
-							className="w-3 h-3 border border-t-transparent rounded-full animate-spin"
-							style={{ borderColor: "var(--color-text-muted)" }}
+						<UnicodeSpinner
+							name="braille"
+							className="text-sm"
+							style={{ color: "var(--color-text-muted)" }}
 						/>
 					</span>
 				)}
@@ -411,9 +413,10 @@ export function WorkspaceSidebar({
 
 	const sidebar = (
 		<aside
-			className={`flex flex-col h-screen flex-shrink-0 ${mobile ? "drawer-left" : "border-r"}`}
+			className={`flex flex-col h-screen shrink-0 ${mobile ? "drawer-left" : "border-r"}`}
 			style={{
 				width: typeof width === "number" ? `${width}px` : width,
+				minWidth: typeof width === "number" ? `${width}px` : width,
 				background: "var(--color-surface)",
 				borderColor: "var(--color-border)",
 			}}
@@ -553,13 +556,10 @@ export function WorkspaceSidebar({
 			<div className="flex-1 overflow-y-auto px-1">
 				{loading ? (
 					<div className="flex items-center justify-center py-12">
-						<div
-							className="w-5 h-5 border-2 rounded-full animate-spin"
-							style={{
-								borderColor: "var(--color-border)",
-								borderTopColor:
-									"var(--color-accent)",
-							}}
+						<UnicodeSpinner
+							name="braille"
+							className="text-2xl"
+							style={{ color: "var(--color-text-muted)" }}
 						/>
 					</div>
 				) : (

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from "react";
 import { ChatMessage } from "./chat-message";
+import { UnicodeSpinner } from "./unicode-spinner";
 import type { UIMessage } from "ai";
 
 type ParsedPart =
@@ -230,8 +231,8 @@ export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanel
 	}, [sessionKey]);
 
 	const statusLabel = useMemo(() => {
-		if (!connected && isStreaming) {return "Connecting...";}
-		if (isStreaming) {return "Streaming...";}
+		if (!connected && isStreaming) {return <UnicodeSpinner name="braille">Connecting</UnicodeSpinner>;}
+		if (isStreaming) {return <UnicodeSpinner name="braille" />;}
 		return "Completed";
 	}, [connected, isStreaming]);
 
