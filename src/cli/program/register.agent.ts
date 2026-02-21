@@ -21,7 +21,7 @@ export function registerAgentCommands(program: Command, args: { agentChannelOpti
   program
     .command("agent")
     .description("Run an agent turn via the Gateway (use --local for embedded)")
-    .requiredOption("-m, --message <text>", "Message body for the agent")
+    .option("-m, --message <text>", "Message body for the agent")
     .option("-t, --to <number>", "Recipient number in E.164 used to derive the session key")
     .option("--session-id <id>", "Use an explicit session id")
     .option("--session-key <key>", "Explicit session key (e.g. agent:main:subagent:uuid)")
@@ -44,6 +44,11 @@ export function registerAgentCommands(program: Command, args: { agentChannelOpti
     .option("--deliver", "Send the agent's reply back to the selected channel", false)
     .option("--json", "Output result as JSON", false)
     .option("--stream-json", "Stream NDJSON events to stdout", false)
+    .option(
+      "--subscribe-session-key <key>",
+      "Subscribe to gateway events for a session key (subscribe-only, no message required)",
+    )
+    .option("--after-seq <n>", "Replay events after this global sequence cursor", "0")
     .option(
       "--timeout <seconds>",
       "Override agent command timeout (seconds, default 600 or config value)",
