@@ -8,6 +8,8 @@
   /* Background / Surface */
   --color-bg: #f5f5f4;
   --color-surface: #ffffff;
+  --color-sidebar-bg: #ffffff;
+  --color-main-bg: rgba(250, 250, 249, 0.5);
   --color-surface-hover: #f5f4f1;
   --color-surface-raised: #ffffff;
 
@@ -29,6 +31,10 @@
   --color-user-bubble: #eae8e4;
   --color-user-bubble-text: #1c1c1a;
   --color-chat-input-bg: rgba(255, 255, 255, 0.8);
+  /* Chat sidebar (right) — stone-style selected/active, light theme */
+  --color-chat-sidebar-active-bg: #f5f5f4;
+  --color-chat-sidebar-active-text: #44403c;
+  --color-chat-sidebar-muted: #57534e;
 
   /* Semantic */
   --color-success: #16a34a;
@@ -39,7 +45,7 @@
   /* Glassmorphism */
   --color-glass: rgba(255, 255, 255, 0.72);
   --color-glass-border: rgba(255, 255, 255, 0.85);
-  --color-bg-glass: rgba(245, 245, 244, 0.8);
+  --color-bg-glass: rgba(250, 250, 249, 0.8);
 
   /* Object type chips */
   --color-chip-object: rgba(37, 99, 235, 0.08);
@@ -70,6 +76,8 @@
   /* Background / Surface */
   --color-bg: #0c0c0b;
   --color-surface: #161615;
+  --color-sidebar-bg: #141413;
+  --color-main-bg: #161615;
   --color-surface-hover: #1e1e1c;
   --color-surface-raised: #1a1a18;
 
@@ -91,6 +99,10 @@
   --color-user-bubble: #1e1e1c;
   --color-user-bubble-text: #ececea;
   --color-chat-input-bg: #1e1e1c;
+  /* Chat sidebar (right) — stone-style selected/active, dark theme */
+  --color-chat-sidebar-active-bg: #1e1e1c;
+  --color-chat-sidebar-active-text: #ececea;
+  --color-chat-sidebar-muted: #78776f;
 
   /* Semantic */
   --color-success: #22c55e;
@@ -101,7 +113,7 @@
   /* Glassmorphism */
   --color-glass: rgba(22, 22, 21, 0.72);
   --color-glass-border: rgba(255, 255, 255, 0.06);
-  --color-bg-glass: rgba(12, 12, 11, 0.8);
+  --color-bg-glass: rgba(22, 22, 21, 0.8);
 
   /* Object type chips */
   --color-chip-object: rgba(59, 130, 246, 0.12);
@@ -127,6 +139,10 @@
   --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
   --shadow-xl: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
+
+/* Disable iframe pointer events during sidebar resize so the
+   drag isn't swallowed by embedded content (e.g. PDF viewer). */
+body.resizing iframe { pointer-events: none; }
 
 /* ============================================================
    Fonts — Bookerly (local)
@@ -192,6 +208,11 @@ body {
   font-family: "Bookerly", Georgia, "Times New Roman", serif;
 }
 
+/* Message bubbles and assistant text: use Bookerly for a polished reading experience. */
+.chat-message-font {
+  font-family: "Bookerly", Georgia, "Times New Roman", serif;
+}
+
 /* Smooth theme transitions */
 *,
 *::before,
@@ -216,6 +237,21 @@ a,
 /* ============================================================
    Scrollbar
    ============================================================ */
+
+/* Base UI menu — remove default focus outlines */
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-item"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="dropdown-menu-checkbox-item"],
+[data-slot="dropdown-menu-radio-item"],
+[data-slot="dropdown-menu-sub-trigger"] {
+  outline: none !important;
+  border: none !important;
+}
+
+[data-slot="dropdown-menu-content"] {
+  border: 1px solid white !important;
+}
 
 ::-webkit-scrollbar {
   width: 6px;
@@ -865,6 +901,7 @@ a,
   line-height: 1.8;
   overflow-wrap: anywhere;
   word-break: break-word;
+  font-family: "Bookerly", Georgia, "Times New Roman", serif;
 }
 
 .chat-prose > *:first-child {
@@ -889,15 +926,15 @@ a,
 }
 
 .chat-prose h1 {
-  font-family: "Instrument Serif", serif;
+  font-family: inherit;
   font-size: 1.6em;
-  font-weight: 400;
+  font-weight: 600;
 }
 
 .chat-prose h2 {
-  font-family: "Instrument Serif", serif;
+  font-family: inherit;
   font-size: 1.35em;
-  font-weight: 400;
+  font-weight: 600;
 }
 
 .chat-prose h3 {

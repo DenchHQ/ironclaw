@@ -437,7 +437,6 @@ export function Sidebar({
         <ProfileSwitcher
           onProfileSwitch={handleProfileSwitch}
           onCreateWorkspace={() => setShowCreateWorkspace(true)}
-          activeProfileHint={String(sidebarRefreshKey)}
         />
       </div>
 

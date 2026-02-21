@@ -4,6 +4,7 @@ import type { UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage } from "./chat-message";
 import { createStreamParser } from "./chat-panel";
+import { UnicodeSpinner } from "./unicode-spinner";
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
 
 type SubagentPanelProps = {
@@ -296,9 +297,9 @@ export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanel
 	}, [messages]);
 
 	const statusLabel = useMemo(() => {
-		if (!connected && (isStreaming || isReconnecting)) {return "Connecting...";}
-		if (isReconnecting) {return "Resuming stream...";}
-		if (isStreaming) {return "Streaming...";}
+		if (!connected && (isStreaming || isReconnecting)) {return <UnicodeSpinner name="braille">Connecting</UnicodeSpinner>;}
+		if (isReconnecting) {return <UnicodeSpinner name="braille">Resuming</UnicodeSpinner>;}
+		if (isStreaming) {return <UnicodeSpinner name="braille" />;}
 		return "Completed";
 	}, [connected, isStreaming, isReconnecting]);
 

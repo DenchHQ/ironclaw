@@ -35,7 +35,24 @@ export async function POST(req: Request) {
 		? rawPath.replace(/^~/, homedir())
 		: rawPath;
 
-	const resolved = resolve(normalize(expanded));
+	let resolved = resolve(normalize(expanded));
+
+	// If the file doesn't exist and looks like a bare filename, try to locate it
+	// using macOS Spotlight (mdfind).
+	if (!existsSync(resolved) && !rawPath.includes("/")) {
+		const found = await new Promise<string | null>((res) => {
+			exec(
+				`mdfind -name ${JSON.stringify(rawPath)} | head -1`,
+				(err, stdout) => {
+					if (err || !stdout.trim()) {res(null);}
+					else {res(stdout.trim().split("\n")[0]);}
+				},
+			);
+		});
+		if (found && existsSync(found)) {
+			resolved = found;
+		}
+	}
 
 	if (!existsSync(resolved)) {
 		return Response.json(

@@ -10,14 +10,21 @@ export type ProfileInfo = {
   hasConfig: boolean;
 };
 
+export type ProfileSwitcherTriggerProps = {
+  isOpen: boolean;
+  onClick: () => void;
+  activeProfile: string;
+  switching: boolean;
+};
+
 type ProfileSwitcherProps = {
   onProfileSwitch?: () => void;
   onCreateWorkspace?: () => void;
-  /** Parent-tracked active profile — triggers a re-fetch when it changes (e.g. after workspace creation). */
-  activeProfileHint?: string | null;
+  /** When set, this renders instead of the default button; dropdown still opens below. */
+  trigger?: (props: ProfileSwitcherTriggerProps) => React.ReactNode;
 };
 
-export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace, activeProfileHint }: ProfileSwitcherProps) {
+export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace, trigger }: ProfileSwitcherProps) {
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [activeProfile, setActiveProfile] = useState("default");
   const [isOpen, setIsOpen] = useState(false);
@@ -37,7 +44,7 @@ export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace, activeProf
 
   useEffect(() => {
     void fetchProfiles();
-  }, [fetchProfiles, activeProfileHint]);
+  }, [fetchProfiles]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -80,35 +87,51 @@ export function ProfileSwitcher({ onProfileSwitch, onCreateWorkspace, activeProf
 
   // Don't show the switcher if there's only one profile and no way to create more
   const showSwitcher = profiles.length > 0;
-  if (!showSwitcher) {return null;}
+  const handleToggle = () => {
+    if (showSwitcher) { setIsOpen((o) => !o); }
+  };
+
+  if (!trigger && !showSwitcher) { return null; }
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        disabled={switching}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
-        style={{ color: "var(--color-text-secondary)" }}
-        title="Switch workspace profile"
-      >
-        {/* Workspace icon */}
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-        </svg>
-        <span className="truncate max-w-[120px]">
-          {activeProfile === "default" ? "Default" : activeProfile}
-        </span>
-        <svg
-          className={`w-3 h-3 transition-transform ${isOpen ? "rotate-180" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+    <div
+      className={`relative ${trigger ? "flex-1 min-w-0" : ""}`}
+      ref={dropdownRef}
+    >
+      {trigger ? (
+        trigger({
+          isOpen,
+          onClick: handleToggle,
+          activeProfile,
+          switching,
+        })
+      ) : (
+        <button
+          onClick={handleToggle}
+          disabled={switching}
+          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
+          style={{ color: "var(--color-text-secondary)" }}
+          title="Switch workspace profile"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+          {/* Workspace icon */}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+          </svg>
+          <span className="truncate max-w-[120px]">
+            {activeProfile === "default" ? "Default" : activeProfile}
+          </span>
+          <svg
+            className={`w-3 h-3 transition-transform ${isOpen ? "rotate-180" : ""}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      )}
 
-      {isOpen && (
+      {showSwitcher && isOpen && (
         <div
           className="absolute left-0 top-full mt-1 w-64 rounded-lg overflow-hidden z-50"
           style={{

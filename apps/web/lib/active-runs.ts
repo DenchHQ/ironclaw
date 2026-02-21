@@ -384,35 +384,12 @@ function updateIndex(
 ) {
 	try {
 		const idxPath = indexFile();
-		let index: Array<Record<string, unknown>>;
-		if (!existsSync(idxPath)) {
-			// Auto-create index with a bootstrap entry for this session so
-			// orphaned .jsonl files become visible in the sidebar.
-			index = [{
-				id: sessionId,
-				title: opts.title || "New Chat",
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-				messageCount: opts.incrementCount || 0,
-			}];
-			writeFileSync(idxPath, JSON.stringify(index, null, 2));
-			return;
-		}
-		index = JSON.parse(
+		if (!existsSync(idxPath)) {return;}
+		const index = JSON.parse(
 			readFileSync(idxPath, "utf-8"),
 		) as Array<Record<string, unknown>>;
-		let session = index.find((s) => s.id === sessionId);
-		if (!session) {
-			// Session file exists but wasn't indexed — add it.
-			session = {
-				id: sessionId,
-				title: opts.title || "New Chat",
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-				messageCount: 0,
-			};
-			index.unshift(session);
-		}
+		const session = index.find((s) => s.id === sessionId);
+		if (!session) {return;}
 		session.updatedAt = Date.now();
 		if (opts.incrementCount) {
 			session.messageCount =
