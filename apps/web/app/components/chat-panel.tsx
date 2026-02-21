@@ -881,6 +881,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		}, []);
 
 		// ── Poll for subagent spawns during active streaming ──
+		const [hasRunningSubagents, setHasRunningSubagents] = useState(false);
+
 		useEffect(() => {
 			if (!currentSessionId || !onSubagentSpawned) {return;}
 			let cancelled = false;
@@ -899,7 +901,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						label?: string;
 						status: "running" | "completed" | "error";
 					}> = data.subagents ?? [];
+					let anyRunning = false;
 					for (const sa of subagents) {
+						if (sa.status === "running") {anyRunning = true;}
 						onSubagentSpawned({
 							childSessionKey: sa.sessionKey,
 							runId: sa.runId,
@@ -909,6 +913,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							status: sa.status,
 						});
 					}
+					if (!cancelled) {setHasRunningSubagents(anyRunning);}
 				} catch { /* ignore */ }
 			};
 
@@ -1343,7 +1348,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						: status === "submitted"
 							? "Thinking..."
 							: status === "streaming"
-								? "Streaming..."
+								? (hasRunningSubagents ? "Waiting for subagents..." : "Streaming...")
 								: status === "error"
 									? "Error"
 									: status;
