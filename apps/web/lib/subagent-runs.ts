@@ -367,7 +367,7 @@ export function isSubagentRunning(sessionKey: string): boolean {
  */
 export function activateGatewayFallback(): void {
 	const reg = getRegistry();
-	for (const [key, run] of reg.runs) {
+	for (const [_key, run] of reg.runs) {
 		if (run.status === "running" && !run._subscribeProcess) {
 			startSubagentSubscribeStream(run);
 		}
