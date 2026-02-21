@@ -31,6 +31,18 @@ const ReportCard = dynamic(
 	},
 );
 
+/* ─── Silent-reply leak filter ─── */
+
+const _SILENT_TOKEN = "NO_REPLY";
+
+function isLeakedSilentToken(text: string): boolean {
+	const t = text.trim();
+	if (!t) {return false;}
+	if (new RegExp(`^${_SILENT_TOKEN}\\W*$`).test(t)) {return true;}
+	if (_SILENT_TOKEN.startsWith(t) && t.length >= 2 && t.length < _SILENT_TOKEN.length) {return true;}
+	return false;
+}
+
 /* ─── Part grouping ─── */
 
 type MessageSegment =
@@ -77,8 +89,9 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 
 	for (const part of parts) {
 		if (part.type === "text") {
-			flush(true);
 			const text = (part as { type: "text"; text: string }).text;
+			if (isLeakedSilentToken(text)) { continue; }
+			flush(true);
 			if (hasReportBlocks(text)) {
 				segments.push(
 					...(splitReportBlocks(text) as MessageSegment[]),
