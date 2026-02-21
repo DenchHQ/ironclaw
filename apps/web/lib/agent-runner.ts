@@ -10,6 +10,7 @@ export type AgentEvent = {
 	stream?: string;
 	data?: Record<string, unknown>;
 	seq?: number;
+	globalSeq?: number;
 	ts?: number;
 	sessionKey?: string;
 	status?: string;
@@ -184,6 +185,43 @@ export function spawnAgentProcess(
 		const sessionKey = `agent:main:web:${agentSessionId}`;
 		args.push("--session-key", sessionKey, "--lane", "web", "--channel", "webchat");
 	}
+
+	const profile = getEffectiveProfile();
+	const workspace = resolveWorkspaceRoot();
+	return spawn("node", args, {
+		cwd: root,
+		env: {
+			...process.env,
+			...(profile ? { OPENCLAW_PROFILE: profile } : {}),
+			...(workspace ? { OPENCLAW_WORKSPACE: workspace } : {}),
+		},
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+}
+
+/**
+ * Spawn a subscribe-only agent child process that tails a session key's events.
+ * Uses the same runtime/env wiring as spawnAgentProcess.
+ */
+export function spawnAgentSubscribeProcess(
+	sessionKey: string,
+	afterSeq = 0,
+): ReturnType<typeof spawn> {
+	const root = resolvePackageRoot();
+
+	const devScript = join(root, "scripts", "run-node.mjs");
+	const prodScript = join(root, "openclaw.mjs");
+	const scriptPath = existsSync(devScript) ? devScript : prodScript;
+
+	const args = [
+		scriptPath,
+		"agent",
+		"--stream-json",
+		"--subscribe-session-key",
+		sessionKey,
+		"--after-seq",
+		String(Math.max(0, Number.isFinite(afterSeq) ? afterSeq : 0)),
+	];
 
 	const profile = getEffectiveProfile();
 	const workspace = resolveWorkspaceRoot();
