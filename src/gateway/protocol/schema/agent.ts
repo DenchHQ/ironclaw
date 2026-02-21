@@ -125,3 +125,18 @@ export const WakeParamsSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const AgentSubscribeParamsSchema = Type.Object(
+  {
+    sessionKey: NonEmptyString,
+    afterSeq: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentUnsubscribeParamsSchema = Type.Object(
+  {
+    sessionKey: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
