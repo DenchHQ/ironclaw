@@ -15,7 +15,7 @@ let listeners = new Set<Listener>();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sharedWatcher: any = null;
 let sharedRoot: string | null = null;
-let __watcherReady = false;
+let _watcherReady = false;
 
 async function ensureWatcher(root: string) {
   if (sharedWatcher && sharedRoot === root) {return;}
