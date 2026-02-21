@@ -19,9 +19,12 @@ export function sendMethodNotAllowed(res: ServerResponse, allow = "POST") {
   sendText(res, 405, "Method Not Allowed");
 }
 
-export function sendUnauthorized(res: ServerResponse) {
+export function sendUnauthorized(res: ServerResponse, reason?: string) {
   sendJson(res, 401, {
-    error: { message: "Unauthorized", type: "unauthorized" },
+    error: {
+      message: reason ?? "Unauthorized — check your gateway auth token or password",
+      type: "unauthorized",
+    },
   });
 }
 
@@ -42,7 +45,44 @@ export function sendGatewayAuthFailure(res: ServerResponse, authResult: GatewayA
     sendRateLimited(res, authResult.retryAfterMs);
     return;
   }
-  sendUnauthorized(res);
+  const reason = authResult.reason;
+  const message = reason
+    ? formatHttpAuthFailureReason(reason)
+    : "Unauthorized — check your gateway auth token or password";
+  sendUnauthorized(res, message);
+}
+
+function formatHttpAuthFailureReason(reason: string): string {
+  switch (reason) {
+    case "token_missing":
+      return "Gateway token missing — provide OPENCLAW_GATEWAY_TOKEN or set gateway.auth.token in your config";
+    case "token_mismatch":
+      return "Gateway token mismatch — the provided token does not match the gateway. Check OPENCLAW_GATEWAY_TOKEN or gateway.auth.token";
+    case "token_missing_config":
+      return "Gateway token not configured on the server — set gateway.auth.token or OPENCLAW_GATEWAY_TOKEN on the gateway host";
+    case "password_missing":
+      return "Gateway password missing — provide OPENCLAW_GATEWAY_PASSWORD or set gateway.auth.password in your config";
+    case "password_mismatch":
+      return "Gateway password mismatch — the provided password does not match the gateway. Check OPENCLAW_GATEWAY_PASSWORD or gateway.auth.password";
+    case "password_missing_config":
+      return "Gateway password not configured on the server — set gateway.auth.password or OPENCLAW_GATEWAY_PASSWORD on the gateway host";
+    case "trusted_proxy_config_missing":
+      return "Trusted proxy mode enabled but no proxy config found — set gateway.auth.trustedProxy in your config";
+    case "trusted_proxy_no_proxies_configured":
+      return "Trusted proxy mode enabled but gateway.trustedProxies is empty — add at least one trusted proxy IP";
+    case "trusted_proxy_untrusted_source":
+      return "Request did not come from a trusted proxy — check gateway.trustedProxies includes your proxy's IP";
+    case "trusted_proxy_user_missing":
+      return "Trusted proxy did not provide a user identity header — check your proxy forwards the configured userHeader";
+    case "trusted_proxy_user_not_allowed":
+      return "User not in the trusted proxy allowUsers list — add the user to gateway.auth.trustedProxy.allowUsers";
+    case "device_token_mismatch":
+      return "Device token mismatch — rotate or reissue the device token";
+    case "rate_limited":
+      return "Too many failed authentication attempts — wait and retry later";
+    default:
+      return `Unauthorized (${reason})`;
+  }
 }
 
 export function sendInvalidRequest(res: ServerResponse, message: string) {
