@@ -97,6 +97,19 @@ function registerCleanupHandlers(): void {
     process.on("exit", () => {
       releaseAllLocksSync();
     });
+
+    // Cleanup on uncaught exceptions / unhandled rejections that may
+    // terminate the process without firing 'exit' in older Node versions
+    // or custom environments.
+    process.on("uncaughtException", (err) => {
+      releaseAllLocksSync();
+      throw err; // re-throw to preserve default behaviour
+    });
+
+    process.on("unhandledRejection", (_reason) => {
+      releaseAllLocksSync();
+      // Don't re-throw; Node's default behaviour handles the rejection.
+    });
   }
 
   // Handle termination signals
@@ -139,7 +152,7 @@ export async function acquireSessionWriteLock(params: {
 }> {
   registerCleanupHandlers();
   const timeoutMs = params.timeoutMs ?? 10_000;
-  const staleMs = params.staleMs ?? 30 * 60 * 1000;
+  const staleMs = params.staleMs ?? 5 * 60 * 1000;
   const sessionFile = path.resolve(params.sessionFile);
   const sessionDir = path.dirname(sessionFile);
   await fs.mkdir(sessionDir, { recursive: true });
