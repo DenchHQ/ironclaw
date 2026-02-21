@@ -296,6 +296,7 @@ function AttachmentStrip({
 
 type ParsedPart =
 	| { type: "text"; text: string }
+	| { type: "user-message"; id?: string; text: string }
 	| { type: "reasoning"; text: string; state?: string }
 	| {
 			type: "dynamic-tool";
@@ -306,7 +307,7 @@ type ParsedPart =
 			output?: Record<string, unknown>;
 		};
 
-function createStreamParser() {
+export function createStreamParser() {
 	const parts: ParsedPart[] = [];
 	let currentTextIdx = -1;
 	let currentReasoningIdx = -1;
@@ -315,6 +316,15 @@ function createStreamParser() {
 		const t = event.type as string;
 
 		switch (t) {
+			case "user-message":
+				currentTextIdx = -1;
+				currentReasoningIdx = -1;
+				parts.push({
+					type: "user-message",
+					id: event.id as string | undefined,
+					text: (event.text as string) ?? "",
+				});
+				break;
 			case "reasoning-start":
 				parts.push({
 					type: "reasoning",
