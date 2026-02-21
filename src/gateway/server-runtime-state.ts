@@ -24,6 +24,8 @@ import {
   type ChatRunEntry,
   createChatRunState,
   createToolEventRecipientRegistry,
+  createSessionEventLog,
+  createSessionSubscriptionRegistry,
 } from "./server-chat.js";
 import { MAX_PAYLOAD_BYTES } from "./server-constants.js";
 import { attachGatewayUpgradeHandler, createGatewayHttpServer } from "./server-http.js";
@@ -181,6 +183,8 @@ export async function createGatewayRuntimeState(params: {
   const removeChatRun = chatRunRegistry.remove;
   const chatAbortControllers = new Map<string, ChatAbortControllerEntry>();
   const toolEventRecipients = createToolEventRecipientRegistry();
+  const sessionEventLog = createSessionEventLog();
+  const sessionSubscriptions = createSessionSubscriptionRegistry();
 
   return {
     canvasHost,
@@ -200,5 +204,7 @@ export async function createGatewayRuntimeState(params: {
     removeChatRun,
     chatAbortControllers,
     toolEventRecipients,
+    sessionEventLog,
+    sessionSubscriptions,
   };
 }
