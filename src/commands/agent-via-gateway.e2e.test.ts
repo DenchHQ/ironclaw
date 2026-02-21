@@ -34,7 +34,7 @@ vi.mock("../gateway/client.js", () => {
 
     async request(method: string, params?: Record<string, unknown>) {
       if (method === "agent.subscribe") {
-        const sessionKey = String(params?.sessionKey ?? "");
+        const sessionKey = typeof params?.sessionKey === "string" ? params.sessionKey : "";
         const onEvent = this.opts.onEvent as ((evt: Record<string, unknown>) => void) | undefined;
         onEvent?.({
           event: "agent",
