@@ -35,6 +35,9 @@ export function readCache<T>(
     cache.delete(key);
     return null;
   }
+  // Promote to most-recent position for LRU eviction.
+  cache.delete(key);
+  cache.set(key, entry);
   return { value: entry.value, cached: true };
 }
 
@@ -47,16 +50,33 @@ export function writeCache<T>(
   if (ttlMs <= 0) {
     return;
   }
+  // Remove existing entry so .set() moves it to the end (LRU order).
+  cache.delete(key);
   if (cache.size >= DEFAULT_CACHE_MAX_ENTRIES) {
-    const oldest = cache.keys().next();
-    if (!oldest.done) {
-      cache.delete(oldest.value);
+    // Evict expired entries first, then fall back to LRU (oldest insertion order).
+    const now = Date.now();
+    let evicted = false;
+    for (const [k, v] of cache) {
+      if (now > v.expiresAt) {
+        cache.delete(k);
+        evicted = true;
+        if (cache.size < DEFAULT_CACHE_MAX_ENTRIES) {
+          break;
+        }
+      }
+    }
+    if (!evicted || cache.size >= DEFAULT_CACHE_MAX_ENTRIES) {
+      const oldest = cache.keys().next();
+      if (!oldest.done) {
+        cache.delete(oldest.value);
+      }
     }
   }
+  const now = Date.now();
   cache.set(key, {
     value,
-    expiresAt: Date.now() + ttlMs,
-    insertedAt: Date.now(),
+    expiresAt: now + ttlMs,
+    insertedAt: now,
   });
 }
 
