@@ -19,7 +19,11 @@ const UI_STATE_FILENAME = ".ironclaw-ui-state.json";
 /** In-memory override; takes precedence over the persisted file. */
 let _uiActiveProfile: string | null | undefined;
 
-type UIState = { activeProfile?: string | null };
+type UIState = {
+  activeProfile?: string | null;
+  /** Maps profile names to absolute workspace paths for workspaces outside ~/.openclaw/. */
+  workspaceRegistry?: Record<string, string>;
+};
 
 function uiStatePath(): string {
   const home = process.env.OPENCLAW_HOME?.trim() || homedir();
@@ -55,12 +59,36 @@ export function getEffectiveProfile(): string | null {
 export function setUIActiveProfile(profile: string | null): void {
   const normalized = profile?.trim() || null;
   _uiActiveProfile = normalized;
-  writeUIState({ activeProfile: normalized });
+  const existing = readUIState();
+  writeUIState({ ...existing, activeProfile: normalized });
 }
 
 /** Reset the in-memory override (re-reads from file on next call). */
 export function clearUIActiveProfileCache(): void {
   _uiActiveProfile = undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace registry — remembers workspaces created outside ~/.openclaw/.
+// ---------------------------------------------------------------------------
+
+/** Read the full workspace registry (profile → absolute path). */
+export function getWorkspaceRegistry(): Record<string, string> {
+  return readUIState().workspaceRegistry ?? {};
+}
+
+/** Look up a single profile's registered workspace path. */
+export function getRegisteredWorkspacePath(profile: string | null): string | null {
+  if (!profile) {return null;}
+  return getWorkspaceRegistry()[profile] ?? null;
+}
+
+/** Persist a profile → workspace-path mapping in the registry. */
+export function registerWorkspacePath(profile: string, absolutePath: string): void {
+  const state = readUIState();
+  const registry = state.workspaceRegistry ?? {};
+  registry[profile] = absolutePath;
+  writeUIState({ ...state, workspaceRegistry: registry });
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +151,26 @@ export function discoverProfiles(): DiscoveredProfile[] {
     }
   }
 
+  // Merge workspaces registered via custom paths (outside ~/.openclaw/)
+  const registry = getWorkspaceRegistry();
+  for (const [profileName, wsPath] of Object.entries(registry)) {
+    if (seen.has(profileName)) {
+      const existing = profiles.find((p) => p.name === profileName);
+      if (existing && !existing.workspaceDir && existsSync(wsPath)) {
+        existing.workspaceDir = wsPath;
+      }
+      continue;
+    }
+    seen.add(profileName);
+    profiles.push({
+      name: profileName,
+      stateDir: baseStateDir,
+      workspaceDir: existsSync(wsPath) ? wsPath : null,
+      isActive: activeProfile === profileName,
+      hasConfig: existsSync(join(baseStateDir, "openclaw.json")),
+    });
+  }
+
   return profiles;
 }
 
@@ -173,8 +221,10 @@ export function resolveWebChatDir(): string {
 export function resolveWorkspaceRoot(): string | null {
   const stateDir = resolveOpenClawStateDir();
   const profile = getEffectiveProfile();
+  const registryPath = getRegisteredWorkspacePath(profile);
   const candidates = [
     process.env.OPENCLAW_WORKSPACE,
+    registryPath,
     profile && profile.toLowerCase() !== "default"
       ? join(stateDir, `workspace-${profile}`)
       : null,

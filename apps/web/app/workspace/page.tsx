@@ -8,7 +8,8 @@ import { useWorkspaceWatcher } from "../hooks/use-workspace-watcher";
 import { ObjectTable } from "../components/workspace/object-table";
 import { ObjectKanban } from "../components/workspace/object-kanban";
 import { DocumentView } from "../components/workspace/document-view";
-import { FileViewer } from "../components/workspace/file-viewer";
+import { FileViewer, isSpreadsheetFile } from "../components/workspace/file-viewer";
+import { HtmlViewer } from "../components/workspace/html-viewer";
 import { CodeViewer } from "../components/workspace/code-viewer";
 import { MediaViewer, detectMediaType, type MediaType } from "../components/workspace/media-viewer";
 import { DatabaseViewer, DuckDBMissing } from "../components/workspace/database-viewer";
@@ -97,6 +98,8 @@ type ContentState =
   | { kind: "file"; data: FileData; filename: string }
   | { kind: "code"; data: FileData; filename: string }
   | { kind: "media"; url: string; mediaType: MediaType; filename: string; filePath: string }
+  | { kind: "spreadsheet"; url: string; filename: string }
+  | { kind: "html"; rawUrl: string; contentUrl: string; filename: string }
   | { kind: "database"; dbPath: string; filename: string }
   | { kind: "report"; reportPath: string; filename: string }
   | { kind: "directory"; node: TreeNode }
@@ -656,6 +659,20 @@ function WorkspacePageInner() {
         } else if (node.type === "report") {
           setContent({ kind: "report", reportPath: node.path, filename: node.name });
         } else if (node.type === "file") {
+          // Spreadsheet files get their own binary viewer
+          if (isSpreadsheetFile(node.name)) {
+            const url = rawFileUrl(node.path);
+            setContent({ kind: "spreadsheet", url, filename: node.name });
+            return;
+          }
+
+          // HTML files get an iframe preview
+          const ext = node.name.split(".").pop()?.toLowerCase() ?? "";
+          if (ext === "html" || ext === "htm") {
+            setContent({ kind: "html", rawUrl: rawFileUrl(node.path), contentUrl: fileApiUrl(node.path), filename: node.name });
+            return;
+          }
+
           // Check if this is a media file (image/video/audio/pdf)
           const mediaType = detectMediaType(node.name);
           if (mediaType) {
@@ -1046,12 +1063,12 @@ function WorkspacePageInner() {
         params.set("path", activePath);
         const entry = current.get("entry");
         if (entry) {params.set("entry", entry);}
-        router.replace(`/workspace?${params.toString()}`, { scroll: false });
+        router.push(`/workspace?${params.toString()}`, { scroll: false });
       }
     } else if (activeSessionId) {
       // Chat mode — no file selected.
       if (current.get("chat") !== activeSessionId || current.has("path")) {
-        router.replace(`/workspace?chat=${encodeURIComponent(activeSessionId)}`, { scroll: false });
+        router.push(`/workspace?chat=${encodeURIComponent(activeSessionId)}`, { scroll: false });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excludes searchParams to avoid infinite loop
@@ -1063,7 +1080,7 @@ function WorkspacePageInner() {
       setEntryModal({ objectName, entryId });
       const params = new URLSearchParams(searchParams.toString());
       params.set("entry", `${objectName}:${entryId}`);
-      router.replace(`/workspace?${params.toString()}`, { scroll: false });
+      router.push(`/workspace?${params.toString()}`, { scroll: false });
     },
     [searchParams, router],
   );
@@ -2081,6 +2098,24 @@ function ContentRenderer({
           filename={content.filename}
           mediaType={content.mediaType}
           filePath={content.filePath}
+        />
+      );
+
+    case "spreadsheet":
+      return (
+        <FileViewer
+          filename={content.filename}
+          type="spreadsheet"
+          url={content.url}
+        />
+      );
+
+    case "html":
+      return (
+        <HtmlViewer
+          rawUrl={content.rawUrl}
+          contentUrl={content.contentUrl}
+          filename={content.filename}
         />
       );
 
