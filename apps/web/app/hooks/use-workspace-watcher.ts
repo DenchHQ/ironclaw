@@ -9,6 +9,8 @@ export type TreeNode = {
   icon?: string;
   defaultView?: "table" | "kanban";
   children?: TreeNode[];
+  /** True when the entry is a symbolic link. */
+  symlink?: boolean;
 };
 
 /**
@@ -28,6 +30,10 @@ export function useWorkspaceWatcher() {
   const [parentDir, setParentDir] = useState<string | null>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [openclawDir, setOpenclawDir] = useState<string | null>(null);
+  const [activeProfile, setActiveProfile] = useState<string | null>(null);
+
+  // Show hidden (dot) files/folders
+  const [showHidden, setShowHidden] = useState(false);
 
   const mountedRef = useRef(true);
   const retryDelayRef = useRef(1000);
@@ -35,30 +41,37 @@ export function useWorkspaceWatcher() {
   // Each fetch increments the counter; only the latest version's response is applied.
   const fetchVersionRef = useRef(0);
 
+  // Bumping this key forces the SSE connection to tear down and reconnect
+  // (used after profile switches so the watcher targets the new workspace).
+  const [sseReconnectKey, setSseReconnectKey] = useState(0);
+
   // Fetch the workspace tree from the tree API
   const fetchWorkspaceTree = useCallback(async () => {
     const version = ++fetchVersionRef.current;
     try {
-      const res = await fetch("/api/workspace/tree");
+      const qs = showHidden ? "?showHidden=1" : "";
+      const res = await fetch(`/api/workspace/tree${qs}`);
       const data = await res.json();
       if (mountedRef.current && fetchVersionRef.current === version) {
         setTree(data.tree ?? []);
         setExists(data.exists ?? false);
         setWorkspaceRoot(data.workspaceRoot ?? null);
         setOpenclawDir(data.openclawDir ?? null);
+        setActiveProfile(data.profile ?? null);
         setLoading(false);
       }
     } catch {
       if (mountedRef.current && fetchVersionRef.current === version) {setLoading(false);}
     }
-  }, []);
+  }, [showHidden]);
 
   // Fetch a directory listing from the browse API
   const fetchBrowseTree = useCallback(async (dir: string) => {
     const version = ++fetchVersionRef.current;
     try {
       setLoading(true);
-      const res = await fetch(`/api/workspace/browse?dir=${encodeURIComponent(dir)}`);
+      const hiddenQs = showHidden ? "&showHidden=1" : "";
+      const res = await fetch(`/api/workspace/browse?dir=${encodeURIComponent(dir)}${hiddenQs}`);
       const data = await res.json();
       if (mountedRef.current && fetchVersionRef.current === version) {
         setTree(data.entries ?? []);
@@ -69,7 +82,7 @@ export function useWorkspaceWatcher() {
     } catch {
       if (mountedRef.current && fetchVersionRef.current === version) {setLoading(false);}
     }
-  }, []);
+  }, [showHidden]);
 
   // Smart setBrowseDir: auto-return to workspace mode when navigating to the
   // workspace root, so all virtual folders (Chats, Cron, etc.) and DuckDB
@@ -104,6 +117,12 @@ export function useWorkspaceWatcher() {
 
   // Manual refresh for use after mutations
   const refresh = useCallback(() => {
+    void fetchTree();
+  }, [fetchTree]);
+
+  // Force SSE reconnection + tree refresh (e.g. after profile switch).
+  const reconnect = useCallback(() => {
+    setSseReconnectKey((k) => k + 1);
     void fetchTree();
   }, [fetchTree]);
 
@@ -197,7 +216,7 @@ export function useWorkspaceWatcher() {
       if (reconnectTimeout) {clearTimeout(reconnectTimeout);}
       if (debounceTimer) {clearTimeout(debounceTimer);}
     };
-  }, [browseDirRaw, fetchWorkspaceTree]);
+  }, [browseDirRaw, fetchWorkspaceTree, sseReconnectKey]);
 
-  return { tree, loading, exists, refresh, browseDir, setBrowseDir, parentDir, workspaceRoot, openclawDir };
+  return { tree, loading, exists, refresh, reconnect, browseDir, setBrowseDir, parentDir, workspaceRoot, openclawDir, activeProfile, showHidden, setShowHidden };
 }

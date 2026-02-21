@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { UnicodeSpinner } from "../unicode-spinner";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 
 type WebSession = {
 	id: string;
@@ -10,6 +17,15 @@ type WebSession = {
 	messageCount: number;
 };
 
+export type SidebarSubagentInfo = {
+	childSessionKey: string;
+	runId: string;
+	task: string;
+	label?: string;
+	parentSessionId: string;
+	status?: "running" | "completed" | "error";
+};
+
 type ChatSessionsSidebarProps = {
 	sessions: WebSession[];
 	activeSessionId: string | null;
@@ -17,12 +33,28 @@ type ChatSessionsSidebarProps = {
 	activeSessionTitle?: string;
 	/** Session IDs with an actively running agent stream. */
 	streamingSessionIds?: Set<string>;
+	/** Subagents spawned by chat sessions. */
+	subagents?: SidebarSubagentInfo[];
+	/** Currently selected subagent session key (if viewing a subagent). */
+	activeSubagentKey?: string | null;
 	onSelectSession: (sessionId: string) => void;
 	onNewSession: () => void;
+	/** Called when a subagent is selected in the sidebar. */
+	onSelectSubagent?: (sessionKey: string) => void;
 	/** When true, renders as a mobile overlay drawer instead of a static sidebar. */
 	mobile?: boolean;
 	/** Close the mobile drawer. */
 	onClose?: () => void;
+	/** Fixed width in px when not mobile (overrides default 260). */
+	width?: number;
+	/** Called when the user deletes a session from the sidebar menu. */
+	onDeleteSession?: (sessionId: string) => void;
+	/** Called when the user renames a session from the sidebar menu. */
+	onRenameSession?: (sessionId: string, newTitle: string) => void;
+	/** Called when the user clicks the collapse/hide sidebar button. */
+	onCollapse?: () => void;
+	/** When true, show a loader instead of empty state (e.g. initial sessions fetch). */
+	loading?: boolean;
 };
 
 /** Format a timestamp into a human-readable relative time string. */
@@ -60,6 +92,25 @@ function PlusIcon() {
 	);
 }
 
+function SubagentIcon() {
+	return (
+		<svg
+			width="11"
+			height="11"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<path d="M16 3h5v5" />
+			<path d="m21 3-7 7" />
+			<path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" />
+		</svg>
+	);
+}
+
 function ChatBubbleIcon() {
 	return (
 		<svg
@@ -77,17 +128,46 @@ function ChatBubbleIcon() {
 	);
 }
 
+function MoreHorizontalIcon() {
+	return (
+		<svg
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<circle cx="12" cy="12" r="1" />
+			<circle cx="5" cy="12" r="1" />
+			<circle cx="19" cy="12" r="1" />
+		</svg>
+	);
+}
+
 export function ChatSessionsSidebar({
 	sessions,
 	activeSessionId,
 	activeSessionTitle: _activeSessionTitle,
 	streamingSessionIds,
+	subagents,
+	activeSubagentKey,
 	onSelectSession,
 	onNewSession,
+	onSelectSubagent,
+	onDeleteSession,
+	onRenameSession,
+	onCollapse,
 	mobile,
 	onClose,
+	width: widthProp,
+	loading = false,
 }: ChatSessionsSidebarProps) {
 	const [hoveredId, setHoveredId] = useState<string | null>(null);
+	const [renamingId, setRenamingId] = useState<string | null>(null);
+	const [renameValue, setRenameValue] = useState("");
 
 	const handleSelect = useCallback(
 		(id: string) => {
@@ -97,48 +177,86 @@ export function ChatSessionsSidebar({
 		[onSelectSession, onClose],
 	);
 
+	const handleSelectSubagentItem = useCallback(
+		(sessionKey: string) => {
+			onSelectSubagent?.(sessionKey);
+			onClose?.();
+		},
+		[onSelectSubagent, onClose],
+	);
+
+	const handleDeleteSession = useCallback(
+		(sessionId: string) => {
+			onDeleteSession?.(sessionId);
+		},
+		[onDeleteSession],
+	);
+
+	const handleStartRename = useCallback((sessionId: string, currentTitle: string) => {
+		setRenamingId(sessionId);
+		setRenameValue(currentTitle || "");
+	}, []);
+
+	const handleCommitRename = useCallback(() => {
+		if (renamingId && renameValue.trim()) {
+			onRenameSession?.(renamingId, renameValue.trim());
+		}
+		setRenamingId(null);
+		setRenameValue("");
+	}, [renamingId, renameValue, onRenameSession]);
+
+	// Index subagents by parent session ID
+	const subagentsByParent = useMemo(() => {
+		const map = new Map<string, SidebarSubagentInfo[]>();
+		if (!subagents) {return map;}
+		for (const sa of subagents) {
+			let list = map.get(sa.parentSessionId);
+			if (!list) {
+				list = [];
+				map.set(sa.parentSessionId, list);
+			}
+			list.push(sa);
+		}
+		return map;
+	}, [subagents]);
+
 	// Group sessions: today, yesterday, this week, this month, older
 	const grouped = groupSessions(sessions);
 
+	const width = mobile ? "280px" : (widthProp ?? 260);
+	const headerHeight = 40; // px — match padding so list content clears the overlay
 	const sidebar = (
 		<aside
-			className={`flex flex-col h-full flex-shrink-0 ${mobile ? "drawer-right" : "border-l"}`}
+			className={`flex flex-col h-full shrink-0 ${mobile ? "drawer-right" : "border-l"}`}
 			style={{
-				width: mobile ? "280px" : 260,
+				width: typeof width === "number" ? `${width}px` : width,
+				minWidth: typeof width === "number" ? `${width}px` : width,
 				borderColor: "var(--color-border)",
-				background: "var(--color-surface)",
+				background: "var(--color-sidebar-bg)",
 			}}
 		>
-			<div
-				className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
-				style={{ borderColor: "var(--color-border)" }}
-			>
-				<div className="min-w-0 flex-1">
-					<span
-						className="text-sm font-medium truncate block"
-						style={{ color: "var(--color-text)" }}
-					>
-						Chats
-					</span>
-				</div>
-				<button
-					type="button"
-					onClick={onNewSession}
-					className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer flex-shrink-0 ml-2"
-					style={{
-						color: "var(--color-accent)",
-						background: "var(--color-accent-light)",
-					}}
-					title="New chat"
+			{/* Scrollable list fills the sidebar; header overlays the top with blur */}
+			<div className="flex-1 min-h-0 relative">
+				{/* Session list — scrolls under the header */}
+				<div
+					className="absolute inset-0 overflow-y-auto"
+					style={{ paddingTop: headerHeight }}
 				>
-					<PlusIcon />
-					New
-				</button>
-			</div>
-
-			{/* Session list */}
-			<div className="flex-1 overflow-y-auto">
-				{sessions.length === 0 ? (
+				{loading && sessions.length === 0 ? (
+					<div className="px-4 py-8 flex flex-col items-center justify-center min-h-[120px]">
+						<UnicodeSpinner
+							name="braille"
+							className="text-xl mb-2"
+							style={{ color: "var(--color-text-muted)" }}
+						/>
+						<p
+							className="text-xs"
+							style={{ color: "var(--color-text-muted)" }}
+						>
+							Loading…
+						</p>
+					</div>
+				) : sessions.length === 0 ? (
 					<div className="px-4 py-8 text-center">
 						<div
 							className="mx-auto w-10 h-10 rounded-xl flex items-center justify-center mb-3"
@@ -169,69 +287,165 @@ export function ChatSessionsSidebar({
 									{group.label}
 								</div>
 							{group.sessions.map((session) => {
-								const isActive = session.id === activeSessionId;
+								const isActive = session.id === activeSessionId && !activeSubagentKey;
 								const isHovered = session.id === hoveredId;
+								const showMore = isHovered;
 								const isStreamingSession = streamingSessionIds?.has(session.id) ?? false;
+								const sessionSubagents = subagentsByParent.get(session.id);
 								return (
-									<button
+									<div
 										key={session.id}
-										type="button"
-										onClick={() => handleSelect(session.id)}
+										className="group relative"
 										onMouseEnter={() => setHoveredId(session.id)}
 										onMouseLeave={() => setHoveredId(null)}
-										className="w-full text-left px-2 py-2 rounded-lg transition-colors cursor-pointer"
+									>
+									<div
+										className="flex items-stretch w-full rounded-lg"
 										style={{
 											background: isActive
-												? "var(--color-accent-light)"
+												? "var(--color-chat-sidebar-active-bg)"
 												: isHovered
 													? "var(--color-surface-hover)"
 													: "transparent",
 										}}
 									>
-										<div className="flex items-center gap-1.5">
-											{isStreamingSession && (
-												<span
-													className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse"
-													style={{ background: "var(--color-accent)" }}
-													title="Agent is running"
+										{renamingId === session.id ? (
+											<form
+												className="flex-1 min-w-0 px-2 py-1.5"
+												onSubmit={(e) => { e.preventDefault(); handleCommitRename(); }}
+											>
+												<input
+													type="text"
+													value={renameValue}
+													onChange={(e) => setRenameValue(e.target.value)}
+													onBlur={handleCommitRename}
+													onKeyDown={(e) => { if (e.key === "Escape") { setRenamingId(null); setRenameValue(""); } }}
+													autoFocus
+													className="w-full text-xs font-medium px-1 py-0.5 rounded outline-none border"
+													style={{ color: "var(--color-text)", background: "var(--color-surface)", borderColor: "var(--color-border)" }}
 												/>
-											)}
-											<div
-												className="text-xs font-medium truncate"
-												style={{
-													color: isActive
-														? "var(--color-accent)"
-														: "var(--color-text)",
-												}}
-											>
-												{session.title || "Untitled chat"}
-											</div>
-										</div>
-										<div className="flex items-center gap-2 mt-0.5" style={{ paddingLeft: isStreamingSession ? "calc(0.375rem + 6px)" : undefined }}>
-											{isStreamingSession && (
-												<span
-													className="text-[10px] font-medium"
-													style={{ color: "var(--color-accent)" }}
+											</form>
+										) : (
+										<button
+											type="button"
+											onClick={() => handleSelect(session.id)}
+											className="flex-1 min-w-0 text-left px-2 py-2 rounded-l-lg transition-colors cursor-pointer"
+										>
+											<div className="flex items-center gap-1.5">
+												{isStreamingSession && (
+													<UnicodeSpinner
+														name="braille"
+														className="text-[10px] flex-shrink-0"
+														style={{ color: "var(--color-chat-sidebar-muted)" }}
+													/>
+												)}
+												<div
+													className="text-xs font-medium truncate"
+													style={{
+														color: isActive
+															? "var(--color-chat-sidebar-active-text)"
+															: "var(--color-text)",
+													}}
 												>
-													Streaming
-												</span>
-											)}
-											<span
-												className="text-[10px]"
-												style={{ color: "var(--color-text-muted)" }}
-											>
-												{timeAgo(session.updatedAt)}
-											</span>
-											{session.messageCount > 0 && (
+													{session.title || "Untitled chat"}
+												</div>
+											</div>
+											<div className="flex items-center gap-2 mt-0.5" style={{ paddingLeft: isStreamingSession ? "calc(0.375rem + 6px)" : undefined }}>
+
 												<span
 													className="text-[10px]"
 													style={{ color: "var(--color-text-muted)" }}
 												>
-													{session.messageCount} msg{session.messageCount !== 1 ? "s" : ""}
+													{timeAgo(session.updatedAt)}
 												</span>
-											)}
+												{session.messageCount > 0 && (
+													<span
+														className="text-[10px]"
+														style={{ color: "var(--color-text-muted)" }}
+													>
+														{session.messageCount} msg{session.messageCount !== 1 ? "s" : ""}
+													</span>
+												)}
+											</div>
+										</button>
+										)}
+										{onDeleteSession && (
+											<div className={`shrink-0 flex items-center pr-1 transition-opacity ${showMore ? "opacity-100" : "opacity-0"}`}>
+												<DropdownMenu>
+													<DropdownMenuTrigger
+														onClick={(e) => e.stopPropagation()}
+														className="flex items-center justify-center w-6 h-6 rounded-md"
+														style={{ color: "var(--color-text-muted)" }}
+														title="More options"
+														aria-label="More options"
+													>
+														<MoreHorizontalIcon />
+													</DropdownMenuTrigger>
+													<DropdownMenuContent align="end" side="bottom">
+														<DropdownMenuItem
+															onSelect={() => handleStartRename(session.id, session.title)}
+														>
+															<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /></svg>
+															Rename
+														</DropdownMenuItem>
+														<DropdownMenuItem
+															variant="destructive"
+															onSelect={() => handleDeleteSession(session.id)}
+														>
+															<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+															Delete
+														</DropdownMenuItem>
+													</DropdownMenuContent>
+												</DropdownMenu>
+											</div>
+										)}
+									</div>
+									{/* Subagent sub-items */}
+									{sessionSubagents && sessionSubagents.length > 0 && (
+										<div className="ml-4 border-l" style={{ borderColor: "var(--color-border)" }}>
+											{sessionSubagents.map((sa) => {
+												const isSubActive = activeSubagentKey === sa.childSessionKey;
+												const isSubRunning = sa.status === "running";
+												const subLabel = sa.label || sa.task;
+												const truncated = subLabel.length > 40 ? subLabel.slice(0, 40) + "..." : subLabel;
+												return (
+													<button
+														key={sa.childSessionKey}
+														type="button"
+														onClick={() => handleSelectSubagentItem(sa.childSessionKey)}
+														className="w-full text-left pl-3 pr-2 py-1.5 rounded-r-lg transition-colors cursor-pointer"
+														style={{
+															background: isSubActive
+																? "var(--color-chat-sidebar-active-bg)"
+																: "transparent",
+														}}
+													>
+														<div className="flex items-center gap-1.5">
+															{isSubRunning && (
+																<UnicodeSpinner
+																	name="braille"
+																	className="text-[9px] flex-shrink-0"
+																	style={{ color: "var(--color-chat-sidebar-muted)" }}
+																/>
+															)}
+															<SubagentIcon />
+															<span
+																className="text-[11px] truncate"
+																style={{
+																	color: isSubActive
+																		? "var(--color-chat-sidebar-active-text)"
+																		: "var(--color-text-muted)",
+																}}
+															>
+																{truncated}
+															</span>
+														</div>
+													</button>
+												);
+											})}
 										</div>
-									</button>
+									)}
+									</div>
 									);
 								})}
 							</div>
@@ -239,6 +453,52 @@ export function ChatSessionsSidebar({
 					</div>
 				)}
 			</div>
+			{/* Header overlay: backdrop blur + 80% bg; list scrolls under it */}
+			<div
+				className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between border-b px-4 py-2 backdrop-blur-md"
+				style={{
+					height: headerHeight,
+					borderColor: "var(--color-border)",
+					background: "color-mix(in srgb, var(--color-sidebar-bg) 80%, transparent)",
+				}}
+			>
+				<div className="min-w-0 flex-1 flex items-center gap-1.5">
+					{onCollapse && (
+						<button
+							type="button"
+							onClick={onCollapse}
+							className="p-1 rounded-md shrink-0 transition-colors hover:bg-black/5"
+							style={{ color: "var(--color-text-muted)" }}
+							title="Hide chat sidebar (⌘⇧B)"
+						>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<rect width="18" height="18" x="3" y="3" rx="2" />
+								<path d="M15 3v18" />
+							</svg>
+						</button>
+					)}
+					<span
+						className="text-xs font-medium truncate block"
+						style={{ color: "var(--color-text)" }}
+					>
+						Chats
+					</span>
+				</div>
+				<button
+					type="button"
+					onClick={onNewSession}
+					className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer shrink-0 ml-1.5"
+					style={{
+						color: "var(--color-chat-sidebar-active-text)",
+						background: "var(--color-chat-sidebar-active-bg)",
+					}}
+					title="New chat"
+				>
+					<PlusIcon />
+					New
+				</button>
+			</div>
+		</div>
 		</aside>
 	);
 

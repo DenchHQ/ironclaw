@@ -33,6 +33,8 @@ const MIME_MAP: Record<string, string> = {
 	m4a: "audio/mp4",
 	// Documents
 	pdf: "application/pdf",
+	html: "text/html",
+	htm: "text/html",
 };
 
 /**

@@ -28,6 +28,8 @@ export type TreeNode = {
   children?: TreeNode[];
   /** When true, the node represents a virtual folder/file outside the real workspace (e.g. Skills, Memories). CRUD ops are disabled. */
   virtual?: boolean;
+  /** True when the entry is a symbolic link / shortcut. */
+  symlink?: boolean;
 };
 
 /** Folder names reserved for virtual sections -- cannot be created/renamed to. */
@@ -81,14 +83,15 @@ function isSystemFile(path: string): boolean {
 // --- Icons (inline SVG, zero-dep) ---
 
 function FolderIcon({ open }: { open?: boolean }) {
-  return open ? (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
-    </svg>
-  ) : (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
+  return (
+    <img
+      src={open ? "/icons/folder-open.png" : "/icons/folder.png"}
+      alt=""
+      width={16}
+      height={16}
+      draggable={false}
+      style={{ flexShrink: 0 }}
+    />
   );
 }
 
@@ -110,17 +113,13 @@ function KanbanIcon() {
 
 function DocumentIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
-    </svg>
+    <img src="/icons/document.png" alt="" width={16} height={16} draggable={false} style={{ flexShrink: 0, filter: "drop-shadow(0 0.5px 1.5px rgba(0,0,0,0.2))" }} />
   );
 }
 
 function FileIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" />
-    </svg>
+    <img src="/icons/document.png" alt="" width={16} height={16} draggable={false} style={{ flexShrink: 0, filter: "drop-shadow(0 0.5px 1.5px rgba(0,0,0,0.2))" }} />
   );
 }
 
@@ -152,6 +151,14 @@ function LockBadge() {
   return (
     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
       <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+function SymlinkBadge() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.55 }}>
+      <path d="m9 18 6-6-6-6" />
     </svg>
   );
 }
@@ -548,7 +555,7 @@ function DraggableNode({
             onCancel={onCancelRename}
           />
         ) : (
-          <span className="truncate flex-1">{node.name.replace(/\.md$/, "")}</span>
+          <span className="truncate flex-1">{node.name}</span>
         )}
 
         {/* Workspace badge for the workspace root entry point */}
@@ -563,6 +570,13 @@ function DraggableNode({
         {isProtected && !isWorkspaceRoot && !compact && (
           <span className="flex-shrink-0 ml-1">
             <LockBadge />
+          </span>
+        )}
+
+        {/* Symlink indicator */}
+        {node.symlink && !compact && (
+          <span className="flex-shrink-0 ml-0.5" title="Symbolic link" style={{ color: "var(--color-text-muted)" }}>
+            <SymlinkBadge />
           </span>
         )}
 

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { UIMessage } from "ai";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
@@ -31,13 +31,26 @@ const ReportCard = dynamic(
 	},
 );
 
+/* ─── Silent-reply leak filter ─── */
+
+const _SILENT_TOKEN = "NO_REPLY";
+
+function isLeakedSilentToken(text: string): boolean {
+	const t = text.trim();
+	if (!t) {return false;}
+	if (new RegExp(`^${_SILENT_TOKEN}\\W*$`).test(t)) {return true;}
+	if (_SILENT_TOKEN.startsWith(t) && t.length >= 2 && t.length < _SILENT_TOKEN.length) {return true;}
+	return false;
+}
+
 /* ─── Part grouping ─── */
 
 type MessageSegment =
 	| { type: "text"; text: string }
 	| { type: "chain"; parts: ChainPart[] }
 	| { type: "report-artifact"; config: ReportConfig }
-	| { type: "diff-artifact"; diff: string };
+	| { type: "diff-artifact"; diff: string }
+	| { type: "subagent-card"; task: string; label?: string; status: "running" | "done" | "error" };
 
 /** Map AI SDK tool state string to a simplified status */
 function toolStatus(state: string): "running" | "done" | "error" {
@@ -76,8 +89,9 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 
 	for (const part of parts) {
 		if (part.type === "text") {
-			flush(true);
 			const text = (part as { type: "text"; text: string }).text;
+			if (isLeakedSilentToken(text)) { continue; }
+			flush(true);
 			if (hasReportBlocks(text)) {
 				segments.push(
 					...(splitReportBlocks(text) as MessageSegment[]),
@@ -115,15 +129,22 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 					isStreaming: rp.state === "streaming",
 				});
 			}
-		} else if (part.type === "dynamic-tool") {
-			const tp = part as {
-				type: "dynamic-tool";
-				toolName: string;
-				toolCallId: string;
-				state: string;
-				input?: unknown;
-				output?: unknown;
-			};
+	} else if (part.type === "dynamic-tool") {
+		const tp = part as {
+			type: "dynamic-tool";
+			toolName: string;
+			toolCallId: string;
+			state: string;
+			input?: unknown;
+			output?: unknown;
+		};
+		if (tp.toolName === "sessions_spawn") {
+			flush(true);
+			const args = asRecord(tp.input);
+			const task = typeof args?.task === "string" ? args.task : "Subagent task";
+			const label = typeof args?.label === "string" ? args.label : undefined;
+			segments.push({ type: "subagent-card", task, label, status: toolStatus(tp.state) });
+		} else {
 			chain.push({
 				kind: "tool",
 				toolName: tp.toolName,
@@ -132,22 +153,34 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 				args: asRecord(tp.input),
 				output: asRecord(tp.output),
 			});
-		} else if (part.type.startsWith("tool-")) {
-			// Handles both live SSE parts (input/output fields) and
-			// persisted JSONL parts (args/result fields from tool-invocation)
-			const tp = part as {
-				type: string;
-				toolCallId: string;
-				toolName?: string;
-				state?: string;
-				title?: string;
-				input?: unknown;
-				output?: unknown;
-				// Persisted JSONL format uses args/result instead
-				args?: unknown;
-				result?: unknown;
-				errorText?: string;
-			};
+		}
+	} else if (part.type.startsWith("tool-")) {
+		// Handles both live SSE parts (input/output fields) and
+		// persisted JSONL parts (args/result fields from tool-invocation)
+		const tp = part as {
+			type: string;
+			toolCallId: string;
+			toolName?: string;
+			state?: string;
+			title?: string;
+			input?: unknown;
+			output?: unknown;
+			// Persisted JSONL format uses args/result instead
+			args?: unknown;
+			result?: unknown;
+			errorText?: string;
+		};
+		const resolvedToolName = tp.title ?? tp.toolName ?? part.type.replace("tool-", "");
+		if (resolvedToolName === "sessions_spawn") {
+			flush(true);
+			const args = asRecord(tp.input) ?? asRecord(tp.args);
+			const task = typeof args?.task === "string" ? args.task : "Subagent task";
+			const label = typeof args?.label === "string" ? args.label : undefined;
+			const resolvedState =
+				tp.state ??
+				(tp.errorText ? "error" : ("result" in tp || "output" in tp) ? "output-available" : "input-available");
+			segments.push({ type: "subagent-card", task, label, status: toolStatus(resolvedState) });
+		} else {
 			// Persisted tool-invocation parts have no state field but
 			// include result/output/errorText to indicate completion.
 			const resolvedState =
@@ -155,16 +188,14 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 				(tp.errorText ? "error" : ("result" in tp || "output" in tp) ? "output-available" : "input-available");
 			chain.push({
 				kind: "tool",
-				toolName:
-					tp.title ??
-					tp.toolName ??
-					part.type.replace("tool-", ""),
+				toolName: resolvedToolName,
 				toolCallId: tp.toolCallId,
 				status: toolStatus(resolvedState),
 				args: asRecord(tp.input) ?? asRecord(tp.args),
 				output: asRecord(tp.output) ?? asRecord(tp.result),
 			});
 		}
+	}
 	}
 
 	flush();
@@ -329,93 +360,42 @@ function AttachFileIcon({ category }: { category: string }) {
 
 function AttachedFilesCard({ paths }: { paths: string[] }) {
 	return (
-		<div className="mb-2">
-			<div className="flex items-center gap-1.5 mb-2">
-				<svg
-					width="12"
-					height="12"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="2"
-					strokeLinecap="round"
-					strokeLinejoin="round"
-					style={{ opacity: 0.5 }}
-				>
-					<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-				</svg>
-				<span
-					className="text-[11px] font-medium uppercase tracking-wider"
-					style={{ opacity: 0.5 }}
-				>
-					{paths.length}{" "}
-					{paths.length === 1 ? "file" : "files"}{" "}
-					attached
-				</span>
-			</div>
-			<div className="flex flex-wrap gap-1.5">
-				{paths.map((filePath, i) => {
-					const category =
-						getCategoryFromPath(filePath);
-					const filename =
-						filePath.split("/").pop() ??
-						filePath;
-					const meta =
-						attachCategoryMeta[category] ??
-						attachCategoryMeta.other;
-					const short = shortenPath(filePath);
+		<div className="flex flex-wrap gap-1.5 mb-2 justify-end">
+			{paths.map((filePath, i) => {
+				const category = getCategoryFromPath(filePath);
+				const src = category === "image"
+					? `/api/workspace/raw-file?path=${encodeURIComponent(filePath)}`
+					: `/api/workspace/thumbnail?path=${encodeURIComponent(filePath)}&size=200`;
+				const ext = filePath.split(".").pop()?.toUpperCase() ?? "";
 
-					return (
-						<div
-							key={i}
-							className="flex-shrink-0 rounded-lg"
-							style={{
-								background:
-									"rgba(0,0,0,0.04)",
-								border: "1px solid rgba(0,0,0,0.06)",
-							}}
-						>
-							<div className="flex items-center gap-2 px-2.5 py-1.5">
-								<div
-									className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
-									style={{
-										background:
-											meta.bg,
-										color: meta.fg,
-									}}
-								>
-									<AttachFileIcon
-										category={
-											category
-										}
-									/>
-								</div>
-								<div className="min-w-0">
-									<p
-										className="text-[12px] font-medium truncate max-w-[160px]"
-										title={
-											filePath
-										}
-									>
-										{filename}
-									</p>
-									<p
-										className="text-[10px] truncate max-w-[160px]"
-										style={{
-											opacity: 0.45,
-										}}
-										title={
-											filePath
-										}
-									>
-										{short}
-									</p>
-								</div>
-							</div>
-						</div>
-					);
-				})}
-			</div>
+				return (
+					<div
+						key={i}
+						className="relative rounded-xl overflow-hidden shrink-0"
+					>
+						<img
+							src={src}
+							alt={filePath.split("/").pop() ?? ""}
+							className="block rounded-xl object-cover"
+							style={{ maxHeight: 140, maxWidth: 160, background: "rgba(0,0,0,0.04)" }}
+							loading="lazy"
+							onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+						/>
+						{category !== "image" && (
+							<span
+								className="absolute bottom-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase"
+								style={{
+									background: "rgba(255,255,255,0.85)",
+									color: "rgba(0,0,0,0.5)",
+									backdropFilter: "blur(4px)",
+								}}
+							>
+								{ext}
+							</span>
+						)}
+					</div>
+				);
+			})}
 		</div>
 	);
 }
@@ -434,17 +414,28 @@ function AttachedFilesCard({ paths }: { paths: string[] }) {
 function looksLikeFilePath(text: string): boolean {
 	const t = text.trim();
 	if (!t || t.length < 3 || t.length > 500) {return false;}
-	// Must start with a path prefix
-	if (!(t.startsWith("~/") || t.startsWith("/") || t.startsWith("./") || t.startsWith("../"))) {
-		return false;
+	// Full path prefix
+	if (t.startsWith("~/") || t.startsWith("/") || t.startsWith("./") || t.startsWith("../")) {
+		const afterPrefix = t.startsWith("~/") ? t.slice(2) :
+			t.startsWith("../") ? t.slice(3) :
+			t.startsWith("./") ? t.slice(2) :
+			t.slice(1);
+		return afterPrefix.includes("/") || afterPrefix.includes(".");
 	}
-	// Must have at least one path separator beyond the prefix
-	// (avoids matching bare `/` or standalone commands like `/bin`)
-	const afterPrefix = t.startsWith("~/") ? t.slice(2) :
-		t.startsWith("../") ? t.slice(3) :
-		t.startsWith("./") ? t.slice(2) :
-		t.slice(1);
-	return afterPrefix.includes("/") || afterPrefix.includes(".");
+	// Bare filename with a known extension (e.g. "Rachapoom-Passport.pdf")
+	const fileExtPattern = /\.(pdf|docx?|xlsx?|pptx?|csv|txt|rtf|pages|numbers|key|md|json|yaml|yml|toml|xml|html?|css|jsx?|tsx?|py|rb|go|rs|java|cpp|c|h|sh|sql|swift|kt|png|jpe?g|gif|webp|svg|bmp|ico|heic|tiff|mp[34]|webm|mov|avi|mkv|flv|wav|ogg|aac|flac|m4a|zip|tar|gz|dmg)$/i;
+	if (fileExtPattern.test(t) && !t.includes(" ")) {
+		return true;
+	}
+	return false;
+}
+
+/** Check if text looks like a filename (allows spaces, used for bold text). */
+function looksLikeFileName(text: string): boolean {
+	const t = text.trim();
+	if (!t || t.length < 3 || t.length > 300) {return false;}
+	const fileExtPattern = /\.(pdf|docx?|xlsx?|pptx?|csv|txt|rtf|pages|numbers|key|md|json|yaml|yml|toml|xml|html?|css|jsx?|tsx?|py|rb|go|rs|java|cpp|c|h|sh|sql|swift|kt|png|jpe?g|gif|webp|svg|bmp|ico|heic|tiff|mp[34]|webm|mov|avi|mkv|flv|wav|ogg|aac|flac|m4a|zip|tar|gz|dmg)$/i;
+	return fileExtPattern.test(t);
 }
 
 /** Open a file path using the system default application. */
@@ -464,13 +455,41 @@ async function openFilePath(path: string, reveal = false) {
 	}
 }
 
+type FilePathClickHandler = (
+	path: string,
+) => Promise<boolean | void> | boolean | void;
+
+/** Convert file:// URLs to local paths for in-app preview routing. */
+function normalizePathReference(value: string): string {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("file://")) {
+		return trimmed;
+	}
+	try {
+		const url = new URL(trimmed);
+		if (url.protocol !== "file:") {
+			return trimmed;
+		}
+		const decoded = decodeURIComponent(url.pathname);
+		// Windows file URLs are /C:/... in URL form
+		if (/^\/[A-Za-z]:\//.test(decoded)) {
+			return decoded.slice(1);
+		}
+		return decoded;
+	} catch {
+		return trimmed;
+	}
+}
+
 /** Clickable file path inline code element */
 function FilePathCode({
 	path,
 	children,
+	onFilePathClick,
 }: {
 	path: string;
 	children: React.ReactNode;
+	onFilePathClick?: FilePathClickHandler;
 }) {
 	const [status, setStatus] = useState<"idle" | "opening" | "error">("idle");
 
@@ -478,16 +497,26 @@ function FilePathCode({
 		e.preventDefault();
 		setStatus("opening");
 		try {
-			const res = await fetch("/api/workspace/open-file", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ path }),
-			});
-			if (!res.ok) {
-				setStatus("error");
-				setTimeout(() => setStatus("idle"), 2000);
-			} else {
+			if (onFilePathClick) {
+				const handled = await onFilePathClick(path);
+				if (handled === false) {
+					setStatus("error");
+					setTimeout(() => setStatus("idle"), 2000);
+					return;
+				}
 				setStatus("idle");
+			} else {
+				const res = await fetch("/api/workspace/open-file", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ path }),
+				});
+				if (!res.ok) {
+					setStatus("error");
+					setTimeout(() => setStatus("idle"), 2000);
+				} else {
+					setStatus("idle");
+				}
 			}
 		} catch {
 			setStatus("error");
@@ -503,35 +532,18 @@ function FilePathCode({
 
 	return (
 		<code
-			className={`inline-flex items-center gap-[0.2em] px-[0.3em] py-0 whitespace-nowrap max-w-full overflow-hidden text-ellipsis no-underline transition-colors duration-150 rounded-md text-[color:var(--color-accent)] border border-[color:var(--color-border)] bg-white/20 hover:bg-white/40 active:bg-white ${status === "opening" ? "cursor-wait opacity-70" : "cursor-pointer"}`}
+			className={`px-[0.3em] no-underline transition-colors duration-150 rounded-[4px] border border-[color:var(--color-border)] bg-white/20 hover:bg-white/40 active:bg-white ${status === "opening" ? "cursor-wait opacity-70" : "cursor-pointer"}`}
+			style={{ color: "var(--color-accent)" }}
 			onClick={handleClick}
 			onContextMenu={handleContextMenu}
-			title={status === "error" ? "File not found" : "Click to open · Right-click to reveal in Finder"}
+			title={
+				status === "error"
+					? "File not found"
+					: onFilePathClick
+						? "Click to preview in workspace · Right-click to reveal in Finder"
+						: "Click to open · Right-click to reveal in Finder"
+			}
 		>
-			<svg
-				width="12"
-				height="12"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				className="shrink-0 opacity-60"
-			>
-				{status === "error" ? (
-					<>
-						<circle cx="12" cy="12" r="10" />
-						<line x1="15" x2="9" y1="9" y2="15" />
-						<line x1="9" x2="15" y1="9" y2="15" />
-					</>
-				) : (
-					<>
-						<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-						<path d="M14 2v4a2 2 0 0 0 2 2h4" />
-					</>
-				)}
-			</svg>
 			{children}
 		</code>
 	);
@@ -539,107 +551,147 @@ function FilePathCode({
 
 /* ─── Markdown component overrides for chat ─── */
 
-const mdComponents: Components = {
-	// Open external links in new tab
-	a: ({ href, children, ...props }) => {
-		const isExternal =
-			href && (href.startsWith("http") || href.startsWith("//"));
-		return (
-			<a
-				href={href}
-				{...(isExternal
-					? { target: "_blank", rel: "noopener noreferrer" }
-					: {})}
-				{...props}
-			>
-				{children}
-			</a>
-		);
-	},
-	// Render images — route local file paths through raw-file API
-	img: ({ src, alt, ...props }) => {
-		const resolvedSrc = typeof src === "string" && !src.startsWith("http://") && !src.startsWith("https://") && !src.startsWith("data:")
-			? `/api/workspace/raw-file?path=${encodeURIComponent(src)}`
-			: src;
-		return (
-			// eslint-disable-next-line @next/next/no-img-element
-			<img src={resolvedSrc} alt={alt ?? ""} loading="lazy" {...props} />
-		);
-	},
-	pre: ({ children, ...props }) => {
-		// react-markdown wraps code blocks in <pre><code>...
-		// Extract the code element to get lang + content
-		const child = Array.isArray(children) ? children[0] : children;
-		if (
-			child &&
-			typeof child === "object" &&
-			"type" in child &&
-			(child as { type?: string }).type === "code"
-		) {
-			const codeEl = child as {
-				props?: {
-					className?: string;
-					children?: string;
+function createMarkdownComponents(
+	onFilePathClick?: FilePathClickHandler,
+): Components {
+	return {
+		// Open external links in new tab; intercept local file-path links
+		a: ({ href, children, ...props }) => {
+			const rawHref = typeof href === "string" ? href : "";
+			const normalizedHref = normalizePathReference(rawHref);
+			const isExternal =
+				rawHref && (rawHref.startsWith("http://") || rawHref.startsWith("https://") || rawHref.startsWith("//"));
+			const isWorkspaceAppLink = rawHref.startsWith("/workspace");
+			const isLocalPathLink =
+				!isWorkspaceAppLink &&
+				(Boolean(rawHref.startsWith("file://")) ||
+					looksLikeFilePath(normalizedHref));
+			return (
+				<a
+					href={href}
+					{...(isExternal
+						? { target: "_blank", rel: "noopener noreferrer" }
+						: {})}
+					{...props}
+					onClick={(e) => {
+						if (!isLocalPathLink || !onFilePathClick) {return;}
+						e.preventDefault();
+						void onFilePathClick(normalizedHref);
+					}}
+				>
+					{children}
+				</a>
+			);
+		},
+		// Route local image paths through raw-file API so workspace images render
+		img: ({ src, alt, ...props }) => {
+			const resolvedSrc = typeof src === "string" && !src.startsWith("http://") && !src.startsWith("https://") && !src.startsWith("data:")
+				? `/api/workspace/raw-file?path=${encodeURIComponent(src)}`
+				: src;
+			return (
+				// eslint-disable-next-line @next/next/no-img-element
+				<img src={resolvedSrc} alt={alt ?? ""} loading="lazy" {...props} />
+			);
+		},
+		// Syntax-highlighted fenced code blocks
+		pre: ({ children, ...props }) => {
+			const child = Array.isArray(children) ? children[0] : children;
+			if (
+				child &&
+				typeof child === "object" &&
+				"type" in child &&
+				(child as { type?: string }).type === "code"
+			) {
+				const codeEl = child as {
+					props?: {
+						className?: string;
+						children?: string;
+					};
 				};
-			};
-			const className = codeEl.props?.className ?? "";
-			const langMatch = className.match(/language-(\w+)/);
-			const lang = langMatch?.[1] ?? "";
-			const code =
-				typeof codeEl.props?.children === "string"
-					? codeEl.props.children.replace(/\n$/, "")
-					: "";
+				const className = codeEl.props?.className ?? "";
+				const langMatch = className.match(/language-(\w+)/);
+				const lang = langMatch?.[1] ?? "";
+				const code =
+					typeof codeEl.props?.children === "string"
+						? codeEl.props.children.replace(/\n$/, "")
+						: "";
 
-			// Diff language: render as DiffCard
-			if (lang === "diff") {
-				return <DiffCard diff={code} />;
-			}
+				// Diff language: render as DiffCard
+				if (lang === "diff") {
+					return <DiffCard diff={code} />;
+				}
 
-			// Known language: syntax-highlight with shiki
-			if (lang) {
-				return (
-					<div className="chat-code-block">
-						<div
-							className="chat-code-lang"
-						>
-							{lang}
+				// Known language: syntax-highlight with shiki
+				if (lang) {
+					return (
+						<div className="chat-code-block">
+							<div
+								className="chat-code-lang"
+							>
+								{lang}
+							</div>
+							<SyntaxBlock code={code} lang={lang} />
 						</div>
-						<SyntaxBlock code={code} lang={lang} />
-					</div>
+					);
+				}
+			}
+			// Fallback: default pre rendering
+			return <pre {...props}>{children}</pre>;
+		},
+		// Inline code — detect file paths and make them clickable
+		code: ({ children, className, ...props }) => {
+			// If this code has a language class, it's inside a <pre> and
+			// will be handled by the pre override above. Just return raw.
+			if (className?.startsWith("language-")) {
+				return (
+					<code className={className} {...props}>
+						{children}
+					</code>
 				);
 			}
-		}
-		// Fallback: default pre rendering
-		return <pre {...props}>{children}</pre>;
-	},
-	// Inline code — detect file paths and make them clickable
-	code: ({ children, className, ...props }) => {
-		// If this code has a language class, it's inside a <pre> and
-		// will be handled by the pre override above. Just return raw.
-		if (className?.startsWith("language-")) {
-			return (
-				<code className={className} {...props}>
-					{children}
-				</code>
-			);
-		}
 
-		// Check if the inline code content looks like a file path
-		const text = typeof children === "string" ? children : "";
-		if (text && looksLikeFilePath(text)) {
-			return <FilePathCode path={text}>{children}</FilePathCode>;
-		}
+			// Check if the inline code content looks like a file path
+			const text = typeof children === "string" ? children : "";
+			const normalizedText = normalizePathReference(text);
+			if (normalizedText && looksLikeFilePath(normalizedText)) {
+				return (
+					<FilePathCode path={normalizedText} onFilePathClick={onFilePathClick}>
+						{children}
+					</FilePathCode>
+				);
+			}
 
-		// Regular inline code
-		return <code {...props}>{children}</code>;
-	},
-};
+			// Regular inline code
+			return <code {...props}>{children}</code>;
+		},
+		// Bold text — detect filenames and make them clickable
+		strong: ({ children, ...props }) => {
+			const text = typeof children === "string" ? children
+				: Array.isArray(children) ? children.filter((c) => typeof c === "string").join("")
+				: "";
+			if (text && looksLikeFileName(text)) {
+				return (
+					<strong {...props}>
+						<FilePathCode path={text} onFilePathClick={onFilePathClick}>
+							{children}
+						</FilePathCode>
+					</strong>
+				);
+			}
+			return <strong {...props}>{children}</strong>;
+		},
+	};
+}
 
 /* ─── Chat message ─── */
 
-export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: { message: UIMessage; isStreaming?: boolean }) {
+export const ChatMessage = memo(function ChatMessage({ message, isStreaming, onSubagentClick, onFilePathClick }: { message: UIMessage; isStreaming?: boolean; onSubagentClick?: (task: string) => void; onFilePathClick?: FilePathClickHandler }) {
 	const isUser = message.role === "user";
 	const segments = groupParts(message.parts);
+	const markdownComponents = useMemo(
+		() => createMarkdownComponents(onFilePathClick),
+		[onFilePathClick],
+	);
 
 	if (isUser) {
 		// User: right-aligned subtle pill
@@ -654,35 +706,41 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: {
 		// Parse attachment prefix from sent messages
 		const attachmentInfo = parseAttachments(textContent);
 
+		if (attachmentInfo) {
+			return (
+				<div className="flex flex-col items-end gap-1.5 py-2">
+					{/* Attachment previews — standalone above the text bubble */}
+					<AttachedFilesCard paths={attachmentInfo.paths} />
+					{/* Text bubble */}
+					{attachmentInfo.message && (
+						<div
+							className="max-w-[80%] w-fit rounded-2xl rounded-br-sm px-3 py-2 text-sm leading-6 break-words chat-message-font"
+							style={{
+								background: "var(--color-user-bubble)",
+								color: "var(--color-user-bubble-text)",
+							}}
+						>
+							<p className="whitespace-pre-wrap break-words">
+								{attachmentInfo.message}
+							</p>
+						</div>
+					)}
+				</div>
+			);
+		}
+
 		return (
 			<div className="flex justify-end py-2">
 				<div
-					className="font-bookerly max-w-[80%] min-w-0 rounded-2xl rounded-br-sm px-3 py-2 text-sm leading-6 overflow-hidden break-all"
+					className="max-w-[80%] min-w-0 rounded-2xl rounded-br-sm px-3 py-2 text-sm leading-6 overflow-hidden break-words chat-message-font"
 					style={{
 						background: "var(--color-user-bubble)",
 						color: "var(--color-user-bubble-text)",
 					}}
 				>
-					{attachmentInfo ? (
-						<>
-							<AttachedFilesCard
-								paths={
-									attachmentInfo.paths
-								}
-							/>
-							{attachmentInfo.message && (
-								<p className="whitespace-pre-wrap break-all">
-									{
-										attachmentInfo.message
-									}
-								</p>
-							)}
-						</>
-					) : (
-						<p className="whitespace-pre-wrap break-all">
-							{textContent}
-						</p>
-					)}
+					<p className="whitespace-pre-wrap break-words text-right">
+						{textContent}
+					</p>
 				</div>
 			</div>
 		);
@@ -707,7 +765,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: {
 						return (
 							<div
 								key={index}
-								className="font-bookerly flex items-start gap-2 rounded-xl px-3 py-2 text-[13px] leading-relaxed overflow-hidden"
+								className="chat-message-font flex items-start gap-2 rounded-xl px-3 py-2 text-[13px] leading-relaxed overflow-hidden"
 								style={{
 									background: `color-mix(in srgb, var(--color-error) 6%, var(--color-surface))`,
 									color: "var(--color-error)",
@@ -764,7 +822,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: {
 								initial={{ opacity: 0, y: 4 }}
 								animate={{ opacity: 1, y: 0 }}
 								transition={{ duration: 0.2, ease: "easeOut" }}
-								className="chat-prose font-bookerly text-sm whitespace-pre-wrap break-all"
+								className="chat-prose chat-message-font text-sm whitespace-pre-wrap break-all"
 								style={{ color: "var(--color-text)" }}
 							>
 								{segment.text}
@@ -778,12 +836,12 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: {
 				initial={{ opacity: 0, y: 4 }}
 				animate={{ opacity: 1, y: 0 }}
 				transition={{ duration: 0.2, ease: "easeOut" }}
-				className="chat-prose font-bookerly text-sm"
+				className="chat-prose chat-message-font text-sm"
 				style={{ color: "var(--color-text)" }}
 			>
 				<ReactMarkdown
 					remarkPlugins={[remarkGfm]}
-					components={mdComponents}
+					components={markdownComponents}
 				>
 					{segment.text}
 				</ReactMarkdown>
@@ -802,31 +860,79 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: {
 					</motion.div>
 				);
 			}
-			if (segment.type === "diff-artifact") {
-				return (
-					<motion.div
-						key={`diff-${index}`}
-						initial={{ opacity: 0, y: 4 }}
-						animate={{ opacity: 1, y: 0 }}
-						transition={{ duration: 0.2, ease: "easeOut" }}
+		if (segment.type === "diff-artifact") {
+			return (
+				<motion.div
+					key={`diff-${index}`}
+					initial={{ opacity: 0, y: 4 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.2, ease: "easeOut" }}
+				>
+					<DiffCard diff={segment.diff} />
+				</motion.div>
+			);
+		}
+		if (segment.type === "subagent-card") {
+			const truncatedTask = segment.task.length > 80 ? segment.task.slice(0, 80) + "..." : segment.task;
+			const isRunning = segment.status === "running";
+			return (
+				<motion.div
+					key={`subagent-${index}`}
+					initial={{ opacity: 0, y: 4 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.2, ease: "easeOut" }}
+				>
+					<button
+						type="button"
+						onClick={() => onSubagentClick?.(segment.task)}
+						className="w-full text-left rounded-xl px-3.5 py-2.5 transition-colors cursor-pointer"
+						style={{
+							background: "var(--color-accent-light)",
+							border: "1px solid color-mix(in srgb, var(--color-accent) 20%, transparent)",
+						}}
 					>
-						<DiffCard diff={segment.diff} />
-					</motion.div>
-				);
-			}
-				return (
-					<motion.div
-						key={`chain-${index}`}
-						initial={{ opacity: 0, y: 4 }}
-						animate={{ opacity: 1, y: 0 }}
-						transition={{ duration: 0.2, ease: "easeOut" }}
-					>
-						<ChainOfThought
-							parts={segment.parts}
-							isStreaming={isStreaming}
-						/>
-					</motion.div>
-				);
+						<div className="flex items-center gap-2.5">
+							{isRunning ? (
+								<span
+									className="inline-block w-2 h-2 rounded-full animate-pulse flex-shrink-0"
+									style={{ background: "var(--color-accent)" }}
+								/>
+							) : (
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0" style={{ color: "var(--color-accent)" }}>
+									<path d="M16 3h5v5" /><path d="m21 3-7 7" /><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" />
+								</svg>
+							)}
+							<div className="min-w-0 flex-1">
+								<div className="flex items-center gap-2">
+									<span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--color-accent)" }}>
+										{isRunning ? "Running Subagent" : "Subagent"}
+									</span>
+								</div>
+								<p className="text-xs mt-0.5 leading-relaxed" style={{ color: "var(--color-text)" }}>
+									{segment.label || truncatedTask}
+								</p>
+							</div>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 opacity-40" style={{ color: "var(--color-text)" }}>
+								<path d="m9 18 6-6-6-6" />
+							</svg>
+						</div>
+					</button>
+				</motion.div>
+			);
+		}
+			return (
+				<motion.div
+					key={`chain-${index}`}
+					initial={{ opacity: 0, y: 4 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.2, ease: "easeOut" }}
+				>
+					<ChainOfThought
+						parts={segment.parts}
+						isStreaming={isStreaming}
+					/>
+				</motion.div>
+			);
 			})}
 			</AnimatePresence>
 		</div>

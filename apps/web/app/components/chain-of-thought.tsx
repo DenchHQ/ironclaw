@@ -566,7 +566,7 @@ function groupToolSteps(tools: ToolPart[]): VisualItem[] {
 /* ─── Main component ─── */
 
 export function ChainOfThought({ parts, isStreaming }: { parts: ChainPart[]; isStreaming?: boolean }) {
-	const [isOpen, setIsOpen] = useState(true);
+	const [isOpen, setIsOpen] = useState(!!isStreaming);
 
 	const isActive = parts.some(
 		(p) =>
@@ -691,7 +691,7 @@ export function ChainOfThought({ parts, isStreaming }: { parts: ChainPart[]; isS
 									className="flex items-start gap-2.5 py-1.5"
 								>
 									<div
-										className="relative z-10 flex-shrink-0 w-5 h-5 mt-0.5 flex items-center justify-center rounded-full"
+										className="relative z-10 flex-shrink-0 w-[18px] h-[18px] flex items-center justify-center rounded-full"
 										style={{
 											background: "var(--color-bg)",
 										}}
@@ -800,20 +800,12 @@ function FetchGroup({ items }: { items: ToolPart[] }) {
 	return (
 		<div className="flex items-start gap-2.5 py-1.5">
 			<div
-				className="relative z-10 flex-shrink-0 w-5 h-5 mt-0.5 flex items-center justify-center rounded-full"
+				className="relative z-10 flex-shrink-0 w-[18px] h-[18px] flex items-center justify-center rounded-full"
 				style={{ background: "var(--color-bg)" }}
 			>
-				{anyRunning ? (
-					<span
-						className="w-4 h-4 border-[1.5px] rounded-full animate-spin"
-						style={{
-							borderColor: "var(--color-border-strong)",
-							borderTopColor: "var(--color-accent)",
-						}}
-					/>
-				) : (
+				<span className={anyRunning ? "animate-pulse" : ""}>
 					<StepIcon kind="fetch" />
-				)}
+				</span>
 			</div>
 			<div className="flex-1 min-w-0">
 				<div
@@ -824,7 +816,7 @@ function FetchGroup({ items }: { items: ToolPart[] }) {
 							: "var(--color-text-secondary)",
 					}}
 				>
-					<span>
+					<span className={anyRunning ? "animate-pulse" : ""}>
 						{anyRunning
 							? `Fetching ${items.length} sources...`
 							: `Fetched ${items.length} sources`}
@@ -841,7 +833,7 @@ function FetchGroup({ items }: { items: ToolPart[] }) {
 				<div
 					className="rounded-2xl overflow-hidden"
 					style={{
-						background: "rgba(255, 255, 255, 0.5)",
+						background: "var(--color-surface)",
 						border: "1px solid var(--color-border)",
 					}}
 				>
@@ -984,18 +976,10 @@ function MediaGroup({
 	return (
 		<div className="flex items-start gap-2.5 py-1.5">
 			<div
-				className="relative z-10 flex-shrink-0 w-5 h-5 mt-0.5 flex items-center justify-center rounded-full"
+				className="relative z-10 flex-shrink-0 w-[18px] h-[18px] flex items-center justify-center rounded-full"
 				style={{ background: "var(--color-bg)" }}
 			>
-				{anyRunning ? (
-					<span
-						className="w-4 h-4 border-[1.5px] rounded-full animate-spin"
-						style={{
-							borderColor: "var(--color-border-strong)",
-							borderTopColor: "var(--color-accent)",
-						}}
-					/>
-				) : (
+				<span className={anyRunning ? "animate-pulse" : ""}>
 					<StepIcon
 						kind={
 							mediaKind === "image"
@@ -1003,11 +987,11 @@ function MediaGroup({
 								: "read"
 						}
 					/>
-				)}
+				</span>
 			</div>
 			<div className="flex-1 min-w-0">
 				<div
-					className="text-[13px] leading-snug mb-1.5"
+					className={`text-[13px] leading-snug mb-1.5${anyRunning ? " animate-pulse" : ""}`}
 					style={{
 						color: anyRunning
 							? "var(--color-text)"
@@ -1038,15 +1022,9 @@ function MediaGroup({
 									border: "1px solid var(--color-border)",
 								}}
 							>
-								<span
-									className="w-4 h-4 border-[1.5px] rounded-full animate-spin"
-									style={{
-										borderColor:
-											"var(--color-border-strong)",
-										borderTopColor:
-											"var(--color-accent)",
-									}}
-								/>
+								<span className="animate-pulse" style={{ color: "var(--color-text-muted)" }}>
+									<StepIcon kind="image" />
+								</span>
 							</div>
 						)}
 						{hasMore && (
@@ -1259,27 +1237,21 @@ function ToolStep({
 	return (
 		<div className="flex items-start gap-2.5 py-1.5">
 			<div
-				className="relative z-10 flex-shrink-0 w-5 h-5 mt-0.5 flex items-center justify-center rounded-full"
+				className="relative z-10 flex-shrink-0 w-[18px] h-[18px] flex items-center justify-center rounded-full"
 				style={{ background: "var(--color-bg)" }}
 			>
-				{status === "running" ? (
-					<span
-						className="w-4 h-4 border-[1.5px] rounded-full animate-spin"
-						style={{
-							borderColor: "var(--color-border-strong)",
-							borderTopColor: "var(--color-accent)",
-						}}
-					/>
-				) : status === "error" ? (
+				{status === "error" ? (
 					<ErrorCircleIcon />
 				) : (
-					<StepIcon kind={kind} />
+					<span className={status === "running" ? "animate-pulse" : ""}>
+						<StepIcon kind={kind} />
+					</span>
 				)}
 			</div>
 
 			<div className="flex-1 min-w-0">
 				<div
-					className="text-[13px] leading-snug flex items-start gap-2 flex-wrap"
+					className="text-[13px] leading-snug flex items-center gap-2 flex-wrap"
 					style={{
 						color:
 							status === "running"
@@ -1287,7 +1259,7 @@ function ToolStep({
 								: "var(--color-text-secondary)",
 					}}
 				>
-					<span className="break-all">{label}</span>
+					<span className={`break-all${status === "running" ? " animate-pulse" : ""}`}>{label}</span>
 					{/* Exit code badge for exec tools */}
 					{kind === "exec" && status === "done" && output?.exitCode !== undefined && (
 						<span

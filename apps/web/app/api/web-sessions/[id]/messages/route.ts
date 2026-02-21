@@ -5,12 +5,9 @@ import {
   mkdirSync,
 } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveWebChatDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
-
-const WEB_CHAT_DIR = join(homedir(), ".openclaw", "web-chat");
-const INDEX_FILE = join(WEB_CHAT_DIR, "index.json");
 
 type IndexEntry = {
   id: string;
@@ -33,11 +30,13 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const filePath = join(WEB_CHAT_DIR, `${id}.jsonl`);
+  const chatDir = resolveWebChatDir();
+  const filePath = join(chatDir, `${id}.jsonl`);
+  const indexPath = join(chatDir, "index.json");
 
-  // Auto-create the session file if it doesn't exist yet
-  if (!existsSync(WEB_CHAT_DIR)) {
-    mkdirSync(WEB_CHAT_DIR, { recursive: true });
+  // Auto-create the session directory if it doesn't exist yet
+  if (!existsSync(chatDir)) {
+    mkdirSync(chatDir, { recursive: true });
   }
   if (!existsSync(filePath)) {
     writeFileSync(filePath, "");
@@ -84,16 +83,16 @@ export async function POST(
 
   // Update index metadata
   try {
-    if (existsSync(INDEX_FILE)) {
+    if (existsSync(indexPath)) {
       const index: IndexEntry[] = JSON.parse(
-        readFileSync(INDEX_FILE, "utf-8"),
+        readFileSync(indexPath, "utf-8"),
       );
       const session = index.find((s) => s.id === id);
       if (session) {
         session.updatedAt = Date.now();
         if (newCount > 0) {session.messageCount += newCount;}
         if (title) {session.title = title;}
-        writeFileSync(INDEX_FILE, JSON.stringify(index, null, 2));
+        writeFileSync(indexPath, JSON.stringify(index, null, 2));
       }
     }
   } catch {

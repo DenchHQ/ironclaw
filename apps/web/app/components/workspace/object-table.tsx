@@ -28,6 +28,14 @@ type ReverseRelation = {
 	entries: Record<string, Array<{ id: string; label: string }>>;
 };
 
+type ServerPaginationProps = {
+	totalCount: number;
+	page: number;
+	pageSize: number;
+	onPageChange: (page: number) => void;
+	onPageSizeChange: (size: number) => void;
+};
+
 type ObjectTableProps = {
 	objectName: string;
 	fields: Field[];
@@ -40,6 +48,10 @@ type ObjectTableProps = {
 	onRefresh?: () => void;
 	/** Column visibility state keyed by field ID. */
 	columnVisibility?: Record<string, boolean>;
+	/** Server-side pagination props. */
+	serverPagination?: ServerPaginationProps;
+	/** Server-side search callback. */
+	onServerSearch?: (query: string) => void;
 };
 
 type EntryRow = Record<string, unknown> & { entry_id?: string };
@@ -368,6 +380,8 @@ export function ObjectTable({
 	onEntryClick,
 	onRefresh,
 	columnVisibility,
+	serverPagination,
+	onServerSearch,
 }: ObjectTableProps) {
 	const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -576,6 +590,8 @@ export function ObjectTable({
 			rowActions={getRowActions}
 			stickyFirstColumn
 			initialColumnVisibility={columnVisibility}
+			serverPagination={serverPagination}
+			onServerSearch={onServerSearch}
 		/>
 
 			{/* Add Entry Modal */}

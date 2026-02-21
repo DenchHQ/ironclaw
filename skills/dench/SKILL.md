@@ -667,6 +667,19 @@ VALUES ('Roadmap', 'map', 'projects/roadmap.md', '<parent_doc_id>', 0);
 - **Field names**: human-readable, proper capitalization ("Email Address" not "email")
 - **Be descriptive**: "Phone Number" not "Phone"
 - **Be consistent**: Don't mix "Full Name" and "Name" in the same object
+- **TRIPLE ALIGNMENT (MANDATORY)**: The DuckDB object `name`, the filesystem directory name, and the `.object.yaml` `name` field MUST all be identical. If any one of these three diverges, the UI will fail to render the object. For example, if DuckDB has `name = 'contract'`, the directory MUST be `contract/` (in workspace) and the yaml MUST have `name: "contract"`. Never use plural for one and singular for another.
+
+### Renaming / Moving Objects
+
+When renaming or relocating an object, you MUST update ALL THREE in a single operation:
+
+1. **DuckDB**: Update `objects.name` (if FK constraints block this, recreate the object with the new name and migrate entries)
+2. **Directory**: `mv` the old directory to the new name
+3. **`.object.yaml`**: Update the `name` field to match
+4. **PIVOT view**: `DROP VIEW IF EXISTS v_{old_name}; CREATE OR REPLACE VIEW v_{new_name} ...`
+5. **Verify**: Confirm all three match and the view returns data
+
+Never rename partially. If you can't complete all steps, don't start the rename — explain the constraint to the user first.
 
 ## Error Handling
 
@@ -872,7 +885,7 @@ After creating a `.report.json` file:
 ## Critical Reminders
 
 - Handle the ENTIRE CRM operation from analysis to SQL execution to filesystem projection to summary
-- **NEVER SKIP FILESYSTEM PROJECTION**: After creating/modifying any object, you MUST create/update `~/.openclaw/workspace/{object}/.object.yaml` AND the `v_{object}` view. If you skip this, the object will be invisible in the sidebar. This is NOT optional.
+- **NEVER SKIP FILESYSTEM PROJECTION**: After creating/modifying any object, you MUST create/update `{object}/.object.yaml` in workspace AND the `v_{object}` view. If you skip this, the object will be invisible in the sidebar. This is NOT optional.
 - **THREE STEPS, EVERY TIME**: (1) SQL transaction, (2) filesystem projection (.object.yaml + directory), (3) verify. An operation is NOT complete until all three are done.
 - Always check existing data before creating (`SELECT` before `INSERT`, or `ON CONFLICT`)
 - Use views (`v_{object}`) for all reads — never write raw PIVOT queries for search
@@ -890,8 +903,9 @@ After creating a `.report.json` file:
 - **workspace_context.yaml**: READ-ONLY. Never modify. Data flows from Dench UI only.
 - **Source of truth**: DuckDB for all structured data. Filesystem for document content and navigation tree. Never duplicate entry data to the filesystem.
 - **ENTRY COUNT**: After adding entries, update `entry_count` in `.object.yaml`.
-- **NEVER POLLUTE THE WORKSPACE**: Always keep cleaning / organising the workspace to something more nicely structured. Always look out for bloat and too many random files scattered around everywhere for no reason, every time you do any actions in filesystem always try to come up with the most efficient and nice file system structure inside `~/.openclaw/workspace`.
-- **TEMPORARY FILES**: All temporary scripts / code / text / other files as and when needed for processing must go into `~/.openclaw/workspace/tmp/` directory (create it if it doesn't exist, only if needed).
+- **NAME CONSISTENCY**: The DuckDB `objects.name`, the filesystem directory name, and `.object.yaml` `name` MUST be identical. A mismatch between ANY of these three will break the UI. Before finishing any object creation or modification, verify: `objects.name == directory_name == yaml.name`. See "Renaming / Moving Objects" under Naming Conventions.
+- **NEVER POLLUTE THE WORKSPACE**: Always keep cleaning / organising the workspace to something more nicely structured. Always look out for bloat and too many random files scattered around everywhere for no reason, every time you do any actions in filesystem always try to come up with the most efficient and nice file system structure inside the workspace.
+- **TEMPORARY FILES**: All temporary scripts / code / text / other files as and when needed for processing must go into `tmp/` directory (create it in the workspace if it doesn't exist, only if needed).
 
 ## Browser Use
 

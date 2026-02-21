@@ -1,10 +1,10 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveOpenClawStateDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
-const CRON_DIR = join(homedir(), ".openclaw", "cron");
+const CRON_DIR = join(resolveOpenClawStateDir(), "cron");
 const JOBS_FILE = join(CRON_DIR, "jobs.json");
 
 type CronStoreFile = {
@@ -46,7 +46,7 @@ function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | 
 
   // Try to read agent session stores to estimate next heartbeat from lastRunMs
   try {
-    const agentsDir = join(homedir(), ".openclaw", "agents");
+    const agentsDir = join(resolveOpenClawStateDir(), "agents");
     if (!existsSync(agentsDir)) {return defaults;}
 
     const agentDirs = readdirSync(agentsDir, { withFileTypes: true });

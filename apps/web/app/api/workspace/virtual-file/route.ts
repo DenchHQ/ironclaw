@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname, resolve, normalize } from "node:path";
-import { homedir } from "node:os";
+import { resolveOpenClawStateDir, resolveWorkspaceRoot } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,7 +10,8 @@ export const runtime = "nodejs";
  * Returns null if the path is invalid or tries to escape.
  */
 function resolveVirtualPath(virtualPath: string): string | null {
-  const home = homedir();
+  const stateDir = resolveOpenClawStateDir();
+  const workspaceDir = resolveWorkspaceRoot() ?? join(stateDir, "workspace");
 
   if (virtualPath.startsWith("~skills/")) {
     // ~skills/<skillName>/SKILL.md
@@ -28,8 +29,8 @@ function resolveVirtualPath(virtualPath: string): string | null {
 
     // Check workspace skills first, then managed skills
     const candidates = [
-      join(home, ".openclaw", "workspace", "skills", skillName, "SKILL.md"),
-      join(home, ".openclaw", "skills", skillName, "SKILL.md"),
+      join(workspaceDir, "skills", skillName, "SKILL.md"),
+      join(stateDir, "skills", skillName, "SKILL.md"),
     ];
     for (const candidate of candidates) {
       if (existsSync(candidate)) {
@@ -46,8 +47,6 @@ function resolveVirtualPath(virtualPath: string): string | null {
     if (rest.includes("..") || rest.includes("/")) {
       return null;
     }
-
-    const workspaceDir = join(home, ".openclaw", "workspace");
 
     if (rest === "MEMORY.md") {
       // Check both casing
@@ -74,7 +73,7 @@ function resolveVirtualPath(virtualPath: string): string | null {
     if (!rest || rest.includes("..") || rest.includes("/")) {
       return null;
     }
-    return join(home, ".openclaw", "workspace", rest);
+    return join(workspaceDir, rest);
   }
 
   return null;
@@ -84,12 +83,13 @@ function resolveVirtualPath(virtualPath: string): string | null {
  * Double-check that the resolved path stays within expected directories.
  */
 function isSafePath(absPath: string): boolean {
-  const home = homedir();
+  const stateDir = resolveOpenClawStateDir();
+  const workspaceDir = resolveWorkspaceRoot() ?? join(stateDir, "workspace");
   const normalized = normalize(resolve(absPath));
   const allowed = [
-    normalize(join(home, ".openclaw", "skills")),
-    normalize(join(home, ".openclaw", "workspace", "skills")),
-    normalize(join(home, ".openclaw", "workspace")),
+    normalize(join(stateDir, "skills")),
+    normalize(join(workspaceDir, "skills")),
+    normalize(workspaceDir),
   ];
   return allowed.some((dir) => normalized.startsWith(dir));
 }

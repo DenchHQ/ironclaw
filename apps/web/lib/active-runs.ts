@@ -17,10 +17,11 @@ import {
 	existsSync,
 	mkdirSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { resolveWebChatDir } from "./workspace";
 import {
 	type AgentEvent,
 	spawnAgentProcess,
+	spawnAgentSubscribeProcess,
 	resolvePackageRoot,
 	extractToolResult,
 	buildToolOutput,
@@ -28,6 +29,9 @@ import {
 	parseErrorBody,
 	parseErrorFromStderr,
 } from "./agent-runner";
+import {
+	hasRunningSubagentsForParent,
+} from "./subagent-runs";
 
 // ── Types ──
 
@@ -62,7 +66,7 @@ export type ActiveRun = {
 	eventBuffer: SseEvent[];
 	subscribers: Set<RunSubscriber>;
 	accumulated: AccumulatedMessage;
-	status: "running" | "completed" | "error";
+	status: "running" | "waiting-for-subagents" | "completed" | "error";
 	startedAt: number;
 	exitCode: number | null;
 	abortController: AbortController;
@@ -70,14 +74,36 @@ export type ActiveRun = {
 	_persistTimer: ReturnType<typeof setTimeout> | null;
 	/** @internal last time persistence was flushed */
 	_lastPersistedAt: number;
+	/** @internal last globalSeq seen from the gateway event stream */
+	lastGlobalSeq: number;
+	/** @internal subscribe child process for waiting-for-subagents continuation */
+	_subscribeProcess?: ChildProcess | null;
 };
 
 // ── Constants ──
 
 const PERSIST_INTERVAL_MS = 2_000;
 const CLEANUP_GRACE_MS = 30_000;
-const WEB_CHAT_DIR = join(homedir(), ".openclaw", "web-chat");
-const INDEX_FILE = join(WEB_CHAT_DIR, "index.json");
+
+const SILENT_REPLY_TOKEN = "NO_REPLY";
+
+/**
+ * Detect leaked silent-reply fragments in finalized text parts.
+ * The agent runner suppresses full "NO_REPLY" tokens, but during streaming
+ * the model may emit a partial prefix (e.g. "NO") before the full token is
+ * assembled and caught. This catches both the full token and known partial
+ * prefixes so they don't leak into persisted/displayed messages.
+ */
+function isLeakedSilentReplyToken(text: string): boolean {
+	const t = text.trim();
+	if (!t) {return false;}
+	if (new RegExp(`^${SILENT_REPLY_TOKEN}\\W*$`).test(t)) {return true;}
+	if (SILENT_REPLY_TOKEN.startsWith(t) && t.length >= 2 && t.length < SILENT_REPLY_TOKEN.length) {return true;}
+	return false;
+}
+// Evaluated per-call so it tracks profile switches at runtime.
+function webChatDir(): string { return resolveWebChatDir(); }
+function indexFile(): string { return join(webChatDir(), "index.json"); }
 
 // ── Singleton registry ──
 // Store on globalThis so the Map survives Next.js HMR reloads in dev mode.
@@ -102,14 +128,14 @@ export function getActiveRun(sessionId: string): ActiveRun | undefined {
 /** Check whether a *running* (not just completed) run exists for a session. */
 export function hasActiveRun(sessionId: string): boolean {
 	const run = activeRuns.get(sessionId);
-	return run !== undefined && run.status === "running";
+	return run !== undefined && (run.status === "running" || run.status === "waiting-for-subagents");
 }
 
 /** Return the session IDs of all currently running agent runs. */
 export function getRunningSessionIds(): string[] {
 	const ids: string[] = [];
 	for (const [sessionId, run] of activeRuns) {
-		if (run.status === "running") {
+		if (run.status === "running" || run.status === "waiting-for-subagents") {
 			ids.push(sessionId);
 		}
 	}
@@ -143,7 +169,7 @@ export function subscribeToRun(
 	}
 
 	// If the run already finished, signal completion immediately.
-	if (run.status !== "running") {
+	if (run.status !== "running" && run.status !== "waiting-for-subagents") {
 		callback(null);
 		return () => {};
 	}
@@ -157,14 +183,20 @@ export function subscribeToRun(
 /** Abort a running agent. Returns true if a run was actually aborted. */
 export function abortRun(sessionId: string): boolean {
 	const run = activeRuns.get(sessionId);
-	if (!run || run.status !== "running") {return false;}
+	if (!run || (run.status !== "running" && run.status !== "waiting-for-subagents")) {return false;}
 
 	// Immediately mark the run as non-running so hasActiveRun() returns
 	// false and the next user message isn't rejected with 409.
+	const wasWaiting = run.status === "waiting-for-subagents";
 	run.status = "error";
 
+	// Clean up waiting subscribe process if present.
+	stopSubscribeProcess(run);
+
 	run.abortController.abort();
-	run.childProcess.kill("SIGTERM");
+	if (!wasWaiting) {
+		run.childProcess.kill("SIGTERM");
+	}
 
 	// Send chat.abort directly to the gateway so the agent run stops
 	// even if the CLI child's best-effort onAbort doesn't complete in time.
@@ -189,12 +221,14 @@ export function abortRun(sessionId: string): boolean {
 	// Fallback: if the child doesn't exit within 5 seconds after
 	// SIGTERM (e.g. the CLI's best-effort chat.abort RPC hangs),
 	// send SIGKILL to force-terminate.
-	const killTimer = setTimeout(() => {
-		try {
-			run.childProcess.kill("SIGKILL");
-		} catch { /* already dead */ }
-	}, 5_000);
-	run.childProcess.once("close", () => clearTimeout(killTimer));
+	if (!wasWaiting) {
+		const killTimer = setTimeout(() => {
+			try {
+				run.childProcess.kill("SIGKILL");
+			} catch { /* already dead */ }
+		}, 5_000);
+		run.childProcess.once("close", () => clearTimeout(killTimer));
+	}
 
 	return true;
 }
@@ -277,6 +311,7 @@ export function startRun(params: {
 		abortController,
 		_persistTimer: null,
 		_lastPersistedAt: 0,
+		lastGlobalSeq: 0,
 	};
 
 	activeRuns.set(sessionId, run);
@@ -306,7 +341,7 @@ export function persistUserMessage(
 	msg: { id: string; content: string; parts?: unknown[] },
 ): void {
 	ensureDir();
-	const filePath = join(WEB_CHAT_DIR, `${sessionId}.jsonl`);
+	const filePath = join(webChatDir(), `${sessionId}.jsonl`);
 	if (!existsSync(filePath)) {writeFileSync(filePath, "");}
 
 	const line = JSON.stringify({
@@ -337,8 +372,9 @@ export function persistUserMessage(
 // ── Internals ──
 
 function ensureDir() {
-	if (!existsSync(WEB_CHAT_DIR)) {
-		mkdirSync(WEB_CHAT_DIR, { recursive: true });
+	const dir = webChatDir();
+	if (!existsSync(dir)) {
+		mkdirSync(dir, { recursive: true });
 	}
 }
 
@@ -347,19 +383,43 @@ function updateIndex(
 	opts: { incrementCount?: number; title?: string },
 ) {
 	try {
-		if (!existsSync(INDEX_FILE)) {return;}
-		const index = JSON.parse(
-			readFileSync(INDEX_FILE, "utf-8"),
+		const idxPath = indexFile();
+		let index: Array<Record<string, unknown>>;
+		if (!existsSync(idxPath)) {
+			// Auto-create index with a bootstrap entry for this session so
+			// orphaned .jsonl files become visible in the sidebar.
+			index = [{
+				id: sessionId,
+				title: opts.title || "New Chat",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				messageCount: opts.incrementCount || 0,
+			}];
+			writeFileSync(idxPath, JSON.stringify(index, null, 2));
+			return;
+		}
+		index = JSON.parse(
+			readFileSync(idxPath, "utf-8"),
 		) as Array<Record<string, unknown>>;
-		const session = index.find((s) => s.id === sessionId);
-		if (!session) {return;}
+		let session = index.find((s) => s.id === sessionId);
+		if (!session) {
+			// Session file exists but wasn't indexed — add it.
+			session = {
+				id: sessionId,
+				title: opts.title || "New Chat",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				messageCount: 0,
+			};
+			index.unshift(session);
+		}
 		session.updatedAt = Date.now();
 		if (opts.incrementCount) {
 			session.messageCount =
 				((session.messageCount as number) || 0) + opts.incrementCount;
 		}
 		if (opts.title) {session.title = opts.title;}
-		writeFileSync(INDEX_FILE, JSON.stringify(index, null, 2));
+		writeFileSync(idxPath, JSON.stringify(index, null, 2));
 	} catch {
 		/* best-effort */
 	}
@@ -430,6 +490,15 @@ function wireChildProcess(run: ActiveRun): void {
 
 	const closeText = () => {
 		if (textStarted) {
+			if (accTextIdx >= 0) {
+				const part = run.accumulated.parts[accTextIdx] as { type: "text"; text: string };
+				if (isLeakedSilentReplyToken(part.text)) {
+					run.accumulated.parts.splice(accTextIdx, 1);
+					for (const [k, v] of accToolMap) {
+						if (v > accTextIdx) { accToolMap.set(k, v - 1); }
+					}
+				}
+			}
 			emit({ type: "text-end", id: currentTextId });
 			textStarted = false;
 		}
@@ -466,7 +535,7 @@ function wireChildProcess(run: ActiveRun): void {
 	// ── Parse stdout JSON lines ──
 
 	const rl = createInterface({ input: child.stdout! });
-
+	const parentSessionKey = `agent:main:web:${run.sessionId}`;
 	// Prevent unhandled 'error' events on the readline interface.
 	// When the child process fails to start (e.g. ENOENT — missing script)
 	// the stdout pipe is destroyed and readline re-emits the error.  Without
@@ -477,16 +546,12 @@ function wireChildProcess(run: ActiveRun): void {
 		// emitting user-visible diagnostics.
 	});
 
-	rl.on("line", (line: string) => {
-		if (!line.trim()) {return;}
+	// ── Reusable parent event processor ──
+	// Handles lifecycle, thinking, assistant text, tool, compaction, and error
+	// events for the parent agent. Used by both the CLI NDJSON stream and the
+	// subscribe-only CLI fallback (waiting-for-subagents state).
 
-		let ev: AgentEvent;
-		try {
-			ev = JSON.parse(line) as AgentEvent;
-		} catch {
-			return;
-		}
-
+	const processParentEvent = (ev: AgentEvent) => {
 		// Lifecycle start
 		if (
 			ev.event === "agent" &&
@@ -602,7 +667,6 @@ function wireChildProcess(run: ActiveRun): void {
 					toolName,
 					input: args,
 				});
-				// Accumulate tool start in ordered parts
 				run.accumulated.parts.push({
 					type: "tool-invocation",
 					toolCallId,
@@ -623,7 +687,6 @@ function wireChildProcess(run: ActiveRun): void {
 						toolCallId,
 						errorText,
 					});
-					// Update the accumulated tool part
 					const idx = accToolMap.get(toolCallId);
 					if (idx !== undefined) {
 						const part = run.accumulated.parts[idx];
@@ -638,7 +701,6 @@ function wireChildProcess(run: ActiveRun): void {
 						toolCallId,
 						output,
 					});
-					// Update the accumulated tool part
 					const idx = accToolMap.get(toolCallId);
 					if (idx !== undefined) {
 						const part = run.accumulated.parts[idx];
@@ -710,6 +772,52 @@ function wireChildProcess(run: ActiveRun): void {
 				emitError(msg);
 			}
 		}
+	};
+
+	const processParentSubscribeEvent = (ev: AgentEvent) => {
+		const gSeq = typeof (ev as Record<string, unknown>).globalSeq === "number"
+			? (ev as Record<string, unknown>).globalSeq as number
+			: undefined;
+		if (gSeq !== undefined) {
+			if (gSeq <= run.lastGlobalSeq) {return;}
+			run.lastGlobalSeq = gSeq;
+		}
+		processParentEvent(ev);
+		if (ev.stream === "lifecycle" && ev.data?.phase === "end") {
+			if (hasRunningSubagentsForParent(run.sessionId)) {
+				openStatusReasoning("Waiting for subagent results...");
+				flushPersistence(run);
+			} else {
+				finalizeWaitingRun(run);
+			}
+		}
+	};
+
+	rl.on("line", (line: string) => {
+		if (!line.trim()) {return;}
+
+		let ev: AgentEvent;
+		try {
+			ev = JSON.parse(line) as AgentEvent;
+		} catch {
+			return;
+		}
+
+		// Skip events from other sessions (e.g. subagent broadcasts that
+		// the gateway delivers on the same WS connection).
+		if (ev.sessionKey && ev.sessionKey !== parentSessionKey) {
+			return;
+		}
+
+		// Track the global event cursor from the gateway for replay on handoff.
+		const gSeq = typeof (ev as Record<string, unknown>).globalSeq === "number"
+			? (ev as Record<string, unknown>).globalSeq as number
+			: undefined;
+		if (gSeq !== undefined && gSeq > run.lastGlobalSeq) {
+			run.lastGlobalSeq = gSeq;
+		}
+
+		processParentEvent(ev);
 	});
 
 	// ── Child process exit ──
@@ -731,22 +839,45 @@ function wireChildProcess(run: ActiveRun): void {
 		}
 
 		closeReasoning();
-		if (!everSentText) {
+
+		const exitedClean = code === 0 || code === null;
+
+		if (!everSentText && !exitedClean) {
 			const tid = nextId("text");
 			emit({ type: "text-start", id: tid });
-			const errMsg =
-				code !== null && code !== 0
-					? `[error] Agent exited with code ${code}. Check server logs for details.`
-					: "[error] No response from agent.";
+			const errMsg = `[error] Agent exited with code ${code}. Check server logs for details.`;
 			emit({ type: "text-delta", id: tid, delta: errMsg });
 			emit({ type: "text-end", id: tid });
 			accAppendText(errMsg);
+		} else if (!everSentText && exitedClean) {
+			const tid = nextId("text");
+			emit({ type: "text-start", id: tid });
+			const msg = "No response from agent.";
+			emit({ type: "text-delta", id: tid, delta: msg });
+			emit({ type: "text-end", id: tid });
+			accAppendText(msg);
 		} else {
 			closeText();
 		}
 
-		run.status = code === 0 || code === null ? "completed" : "error";
 		run.exitCode = code;
+
+		const hasRunningSubagents = hasRunningSubagentsForParent(run.sessionId);
+
+		// If the CLI exited cleanly and subagents are still running,
+		// keep the SSE stream open and wait for announcement-triggered
+		// parent turns via subscribe-only CLI NDJSON.
+		if (exitedClean && hasRunningSubagents) {
+			run.status = "waiting-for-subagents";
+
+			openStatusReasoning("Waiting for subagent results...");
+			flushPersistence(run);
+			startParentSubscribeStream(run, parentSessionKey, processParentSubscribeEvent);
+			return;
+		}
+
+		// Normal completion path.
+		run.status = exitedClean ? "completed" : "error";
 
 		// Final persistence flush (removes _streaming flag).
 		flushPersistence(run);
@@ -801,6 +932,90 @@ function wireChildProcess(run: ActiveRun): void {
 	});
 }
 
+function startParentSubscribeStream(
+	run: ActiveRun,
+	parentSessionKey: string,
+	onEvent: (ev: AgentEvent) => void,
+): void {
+	stopSubscribeProcess(run);
+	const child = spawnAgentSubscribeProcess(parentSessionKey, run.lastGlobalSeq);
+	run._subscribeProcess = child;
+	const rl = createInterface({ input: child.stdout! });
+
+	rl.on("line", (line: string) => {
+		if (!line.trim()) {return;}
+		let ev: AgentEvent;
+		try {
+			ev = JSON.parse(line) as AgentEvent;
+		} catch {
+			return;
+		}
+		if (ev.sessionKey && ev.sessionKey !== parentSessionKey) {
+			return;
+		}
+		onEvent(ev);
+	});
+
+	child.on("close", () => {
+		if (run._subscribeProcess === child) {
+			run._subscribeProcess = null;
+		}
+		if (run.status !== "waiting-for-subagents") {return;}
+		// If still waiting, restart subscribe stream from the latest cursor.
+		setTimeout(() => {
+			if (run.status === "waiting-for-subagents" && !run._subscribeProcess) {
+				startParentSubscribeStream(run, parentSessionKey, onEvent);
+			}
+		}, 300);
+	});
+
+	child.on("error", (err) => {
+		console.error("[active-runs] Parent subscribe child error:", err);
+	});
+
+	child.stderr?.on("data", (chunk: Buffer) => {
+		console.error("[active-runs subscribe stderr]", chunk.toString());
+	});
+}
+
+function stopSubscribeProcess(run: ActiveRun): void {
+	if (!run._subscribeProcess) {return;}
+	try {
+		run._subscribeProcess.kill("SIGTERM");
+	} catch {
+		/* ignore */
+	}
+	run._subscribeProcess = null;
+}
+
+// ── Finalize a waiting-for-subagents run ──
+
+/**
+ * Transition a run from "waiting-for-subagents" to "completed".
+ * Called when the last subagent finishes and the parent's announcement-
+ * triggered turn completes.
+ */
+function finalizeWaitingRun(run: ActiveRun): void {
+	if (run.status !== "waiting-for-subagents") {return;}
+
+	run.status = "completed";
+
+	stopSubscribeProcess(run);
+
+	flushPersistence(run);
+
+	for (const sub of run.subscribers) {
+		try { sub(null); } catch { /* ignore */ }
+	}
+	run.subscribers.clear();
+
+	setTimeout(() => {
+		if (activeRuns.get(run.sessionId) === run) {
+			cleanupRun(run.sessionId);
+		}
+	}, CLEANUP_GRACE_MS);
+}
+
 // ── Debounced persistence ──
 
 function schedulePersist(run: ActiveRun) {
@@ -825,22 +1040,27 @@ function flushPersistence(run: ActiveRun) {
 		return; // Nothing to persist yet.
 	}
 
+	// Filter out leaked silent-reply text fragments before persisting.
+	const cleanParts = parts.filter((p) =>
+		p.type !== "text" || !isLeakedSilentReplyToken((p as { text: string }).text),
+	);
+
 	// Build content text from text parts for the backwards-compatible
 	// content field (used when parts are not available).
-	const text = parts
+	const text = cleanParts
 		.filter((p): p is { type: "text"; text: string } => p.type === "text")
 		.map((p) => p.text)
 		.join("");
 
-	const isStillRunning = run.status === "running";
+	const isStillStreaming = run.status === "running" || run.status === "waiting-for-subagents";
 	const message: Record<string, unknown> = {
 		id: run.accumulated.id,
 		role: "assistant",
 		content: text,
-		parts, // Ordered parts — preserves interleaving of reasoning, tools, text
+		parts: cleanParts,
 		timestamp: new Date().toISOString(),
 	};
-	if (isStillRunning) {
+	if (isStillStreaming) {
 		message._streaming = true;
 	}
 
@@ -860,7 +1080,7 @@ function upsertMessage(
 	message: Record<string, unknown>,
 ) {
 	ensureDir();
-	const fp = join(WEB_CHAT_DIR, `${sessionId}.jsonl`);
+	const fp = join(webChatDir(), `${sessionId}.jsonl`);
 	if (!existsSync(fp)) {writeFileSync(fp, "");}
 
 	const msgId = message.id as string;
@@ -895,5 +1115,6 @@ function cleanupRun(sessionId: string) {
 	const run = activeRuns.get(sessionId);
 	if (!run) {return;}
 	if (run._persistTimer) {clearTimeout(run._persistTimer);}
+	stopSubscribeProcess(run);
 	activeRuns.delete(sessionId);
 }

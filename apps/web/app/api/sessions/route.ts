@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveOpenClawStateDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -36,12 +36,8 @@ type SessionRow = {
   contextTokens?: number;
 };
 
-function resolveOpenClawDir(): string {
-  return join(homedir(), ".openclaw");
-}
-
 export async function GET() {
-  const openclawDir = resolveOpenClawDir();
+  const openclawDir = resolveOpenClawStateDir();
   const agentsDir = join(openclawDir, "agents");
 
   if (!existsSync(agentsDir)) {

@@ -2,6 +2,9 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { FileManagerTree, type TreeNode } from "./file-manager-tree";
+import { ProfileSwitcher } from "./profile-switcher";
+import { CreateWorkspaceDialog } from "./create-workspace-dialog";
+import { UnicodeSpinner } from "../unicode-spinner";
 
 /** Shape returned by /api/workspace/suggest-files */
 type SuggestItem = {
@@ -37,6 +40,18 @@ type WorkspaceSidebarProps = {
 	mobile?: boolean;
 	/** Close the mobile drawer. */
 	onClose?: () => void;
+	/** Active workspace profile name (null = default). */
+	activeProfile?: string | null;
+	/** Fixed width in px when not mobile (overrides default 260). */
+	width?: number;
+	/** Called after the user switches to a different profile. */
+	onProfileSwitch?: () => void;
+	/** Whether hidden (dot) files/folders are currently shown. */
+	showHidden?: boolean;
+	/** Toggle hidden files visibility. */
+	onToggleHidden?: () => void;
+	/** Called when the user clicks the collapse/hide sidebar button. */
+	onCollapse?: () => void;
 };
 
 function HomeIcon() {
@@ -59,18 +74,14 @@ function HomeIcon() {
 
 function FolderOpenIcon() {
 	return (
-		<svg
-			width="20"
-			height="20"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		>
-			<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
-		</svg>
+		<img
+			src="/icons/folder-open.png"
+			alt=""
+			width={20}
+			height={20}
+			draggable={false}
+			style={{ flexShrink: 0 }}
+		/>
 	);
 }
 
@@ -164,25 +175,26 @@ function SearchIcon() {
 
 function SmallFolderIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-			<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-		</svg>
+		<img
+			src="/icons/folder.png"
+			alt=""
+			width={14}
+			height={14}
+			draggable={false}
+			style={{ flexShrink: 0 }}
+		/>
 	);
 }
 
 function SmallFileIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-			<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" />
-		</svg>
+		<img src="/icons/document.png" alt="" width={14} height={14} draggable={false} style={{ flexShrink: 0, filter: "drop-shadow(0 0.5px 1.5px rgba(0,0,0,0.2))" }} />
 	);
 }
 
 function SmallDocIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-			<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
-		</svg>
+		<img src="/icons/document.png" alt="" width={14} height={14} draggable={false} style={{ flexShrink: 0, filter: "drop-shadow(0 0.5px 1.5px rgba(0,0,0,0.2))" }} />
 	);
 }
 
@@ -311,9 +323,10 @@ function FileSearch({ onSelect }: { onSelect: (item: SuggestItem) => void }) {
 				/>
 				{loading && (
 					<span className="absolute right-2.5 top-1/2 -translate-y-1/2">
-						<div
-							className="w-3 h-3 border border-t-transparent rounded-full animate-spin"
-							style={{ borderColor: "var(--color-text-muted)" }}
+						<UnicodeSpinner
+							name="braille"
+							className="text-sm"
+							style={{ color: "var(--color-text-muted)" }}
 						/>
 					</span>
 				)}
@@ -393,21 +406,30 @@ export function WorkspaceSidebar({
 	onExternalDrop,
 	mobile,
 	onClose,
+	activeProfile,
+	onProfileSwitch,
+	showHidden,
+	onToggleHidden,
+	width: widthProp,
+	onCollapse,
 }: WorkspaceSidebarProps) {
 	const isBrowsing = browseDir != null;
+	const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+	const width = mobile ? "280px" : (widthProp ?? 260);
 
 	const sidebar = (
 		<aside
-			className={`flex flex-col h-screen flex-shrink-0 ${mobile ? "drawer-left" : "border-r"}`}
+			className={`flex flex-col h-screen shrink-0 ${mobile ? "drawer-left" : "border-r"}`}
 			style={{
-				width: mobile ? "280px" : "260px",
-				background: "var(--color-surface)",
+				width: typeof width === "number" ? `${width}px` : width,
+				minWidth: typeof width === "number" ? `${width}px` : width,
+				background: "var(--color-sidebar-bg)",
 				borderColor: "var(--color-border)",
 			}}
 		>
 			{/* Header */}
 			<div
-				className="flex items-center gap-2.5 px-4 py-3 border-b"
+				className="flex items-center gap-2 px-3 py-2.5 border-b"
 				style={{ borderColor: "var(--color-border)" }}
 			>
 				{isBrowsing ? (
@@ -457,39 +479,84 @@ export function WorkspaceSidebar({
 						<button
 							type="button"
 							onClick={() => void onGoToChat?.()}
-							className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer transition-opacity"
+							className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 cursor-pointer transition-colors hover:bg-stone-200 dark:hover:bg-stone-700"
 							style={{
-								background: "var(--color-accent-light)",
-								color: "var(--color-accent)",
+								background: "transparent",
+								color: "var(--color-text-muted)",
 							}}
 							title="All Chats"
-							onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.7"; }}
-							onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
 						>
-							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
 								<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
 								<polyline points="9 22 9 12 15 12 15 22" />
 							</svg>
 						</button>
-						<div className="flex-1 min-w-0">
-							<div
-								className="text-sm font-medium truncate"
-								style={{ color: "var(--color-text)" }}
-							>
-								{orgName || "Workspace"}
-							</div>
-							<div
-								className="text-[11px]"
-								style={{
-									color: "var(--color-text-muted)",
-								}}
-							>
-								Ironclaw
-							</div>
-						</div>
+						<ProfileSwitcher
+							onProfileSwitch={onProfileSwitch}
+							onCreateWorkspace={() => setShowCreateWorkspace(true)}
+							activeProfileHint={activeProfile}
+							trigger={({ isOpen, onClick, activeProfile: profileName, switching }) => (
+								<button
+									type="button"
+									onClick={onClick}
+									disabled={switching}
+									className="flex-1 min-w-0 w-full flex items-center justify-between gap-1.5 text-left rounded-lg py-1 px-1.5 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
+									title="Switch workspace profile"
+								>
+									<div className="min-w-0 truncate">
+										<div
+											className="text-[13px] font-semibold truncate text-stone-700 dark:text-stone-200"
+										>
+											{orgName || "Workspace"}
+										</div>
+										<div
+											className="text-[11px] flex items-center gap-1 truncate text-stone-400 dark:text-stone-500"
+										>
+											<span>Ironclaw</span>
+											{profileName && profileName !== "default" && (
+												<span
+													className="px-1 py-0.5 rounded text-[10px] shrink-0 bg-stone-200 text-stone-500 dark:bg-stone-700 dark:text-stone-400"
+												>
+													{profileName}
+												</span>
+											)}
+										</div>
+									</div>
+									<svg
+										className={`w-3 h-3 shrink-0 transition-transform text-stone-400 ${isOpen ? "rotate-180" : ""}`}
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+									>
+										<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+									</svg>
+								</button>
+							)}
+						/>
 					</>
 				)}
+				{onCollapse && (
+					<button
+						type="button"
+						onClick={onCollapse}
+						className="p-1 rounded-md shrink-0 transition-colors hover:bg-stone-200 dark:hover:bg-stone-700"
+						style={{ color: "var(--color-text-muted)" }}
+						title="Hide sidebar (⌘B)"
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+							<rect width="18" height="18" x="3" y="3" rx="2" />
+							<path d="M9 3v18" />
+						</svg>
+					</button>
+				)}
 			</div>
+
+			{/* Create workspace dialog */}
+			<CreateWorkspaceDialog
+				isOpen={showCreateWorkspace}
+				onClose={() => setShowCreateWorkspace(false)}
+				onCreated={onProfileSwitch}
+			/>
 
 			{/* File search */}
 			{onFileSearchSelect && (
@@ -500,13 +567,10 @@ export function WorkspaceSidebar({
 			<div className="flex-1 overflow-y-auto px-1">
 				{loading ? (
 					<div className="flex items-center justify-center py-12">
-						<div
-							className="w-5 h-5 border-2 rounded-full animate-spin"
-							style={{
-								borderColor: "var(--color-border)",
-								borderTopColor:
-									"var(--color-accent)",
-							}}
+						<UnicodeSpinner
+							name="braille"
+							className="text-2xl"
+							style={{ color: "var(--color-text-muted)" }}
 						/>
 					</div>
 				) : (
@@ -538,7 +602,43 @@ export function WorkspaceSidebar({
 				>
 					ironclaw.sh
 				</a>
-				<ThemeToggle />
+				<div className="flex items-center gap-0.5">
+					{onToggleHidden && (
+						<button
+							type="button"
+							onClick={onToggleHidden}
+							className="p-1.5 rounded-lg transition-colors"
+							style={{ color: showHidden ? "var(--color-accent)" : "var(--color-text-muted)" }}
+							title={showHidden ? "Hide dotfiles" : "Show dotfiles"}
+						>
+							<svg
+								width="16"
+								height="16"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							>
+								{showHidden ? (
+									<>
+										<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+										<circle cx="12" cy="12" r="3" />
+									</>
+								) : (
+									<>
+										<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+										<path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+										<path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+										<path d="m2 2 20 20" />
+									</>
+								)}
+							</svg>
+						</button>
+					)}
+					<ThemeToggle />
+				</div>
 			</div>
 		</aside>
 	);

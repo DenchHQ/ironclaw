@@ -405,7 +405,7 @@ export async function GET(
 
   // Pagination
   const page = Math.max(1, Number(pageParam) || 1);
-  const pageSize = Math.min(500, Math.max(1, Number(pageSizeParam) || 200));
+  const pageSize = Math.min(5000, Math.max(1, Number(pageSizeParam) || 100));
   const offset = (page - 1) * pageSize;
   const limitClause = ` LIMIT ${pageSize} OFFSET ${offset}`;
 
@@ -424,8 +424,15 @@ export async function GET(
 
   // Try the PIVOT view first, then fall back to raw EAV query + client-side pivot
   let entries: Record<string, unknown>[] = [];
+  let totalCount = 0;
 
   try {
+    // Get total count with same WHERE clause but no LIMIT/OFFSET
+    const countResult = q<{ cnt: number }>(dbFile,
+      `SELECT COUNT(*) as cnt FROM v_${name}${whereClause}`,
+    );
+    totalCount = countResult[0]?.cnt ?? 0;
+
     const pivotEntries = q(dbFile,
       `SELECT * FROM v_${name}${whereClause}${orderByClause}${limitClause}`,
     );
@@ -477,5 +484,8 @@ export async function GET(
     effectiveDisplayField,
     savedViews,
     activeView,
+    totalCount,
+    page,
+    pageSize,
   });
 }

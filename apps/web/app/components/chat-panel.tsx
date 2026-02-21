@@ -17,6 +17,13 @@ import {
 	type SelectedFile,
 } from "./file-picker-modal";
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { UnicodeSpinner } from "./unicode-spinner";
 
 // ── Attachment types & helpers ──
 
@@ -24,6 +31,10 @@ type AttachedFile = {
 	id: string;
 	name: string;
 	path: string;
+	/** True while the file is still uploading to the server. */
+	uploading?: boolean;
+	/** Local blob URL for instant preview before upload completes. */
+	localUrl?: string;
 };
 
 function getFileCategory(
@@ -148,6 +159,153 @@ function FileTypeIcon({ category }: { category: string }) {
 	}
 }
 
+function QueueItem({
+	msg,
+	idx,
+	onEdit,
+	onSendNow,
+	onRemove,
+}: {
+	msg: QueuedMessage;
+	idx: number;
+	onEdit: (id: string, text: string) => void;
+	onSendNow: (id: string) => void;
+	onRemove: (id: string) => void;
+}) {
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState(msg.text);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
+
+	const autoResize = () => {
+		const el = inputRef.current;
+		if (!el) {return;}
+		el.style.height = "auto";
+		el.style.height = `${el.scrollHeight}px`;
+	};
+
+	useEffect(() => {
+		if (editing) {
+			inputRef.current?.focus();
+			const len = inputRef.current?.value.length ?? 0;
+			inputRef.current?.setSelectionRange(len, len);
+			autoResize();
+		}
+	}, [editing]);
+
+	const commitEdit = () => {
+		const trimmed = draft.trim();
+		if (trimmed && trimmed !== msg.text) {
+			onEdit(msg.id, trimmed);
+		} else {
+			setDraft(msg.text);
+		}
+		setEditing(false);
+	};
+
+	return (
+		<div
+			className={`flex items-start gap-2.5 group py-2 ${idx > 0 ? "border-t" : ""}`}
+			style={idx > 0 ? { borderColor: "var(--color-border)" } : undefined}
+		>
+			<span
+				className="shrink-0 mt-px text-[11px] font-medium tabular-nums w-4"
+				style={{ color: "var(--color-text-muted)" }}
+			>
+				{idx + 1}
+			</span>
+			{editing ? (
+				<textarea
+					ref={inputRef}
+					className="flex-1 text-[13px] leading-[1.45] min-w-0 resize-none rounded-md px-2 py-1 outline-none"
+					style={{
+						color: "var(--color-text-secondary)",
+						background: "var(--color-bg)",
+						border: "1px solid var(--color-border)",
+					}}
+					rows={1}
+					value={draft}
+					onChange={(e) => { setDraft(e.target.value); autoResize(); }}
+					onBlur={commitEdit}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(); }
+						if (e.key === "Escape") { setDraft(msg.text); setEditing(false); }
+					}}
+				/>
+			) : (
+				<div className="flex-1 min-w-0 flex items-center gap-2">
+					{msg.attachedFiles.length > 0 && (
+						<div className="flex gap-1 shrink-0">
+							{msg.attachedFiles.map((af) => {
+								const cat = getFileCategory(af.name);
+								const src = cat === "image"
+									? (af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`)
+									: af.path ? `/api/workspace/thumbnail?path=${encodeURIComponent(af.path)}&size=100` : undefined;
+								return (
+									<img
+										key={af.id}
+										src={src}
+										alt={af.name}
+										className="rounded object-cover"
+										style={{ height: 28, width: 28, background: "var(--color-surface-hover)" }}
+										onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+									/>
+								);
+							})}
+						</div>
+					)}
+					<p
+						className="text-[13px] leading-[1.45] line-clamp-1 min-w-0"
+						style={{ color: "var(--color-text-secondary)" }}
+					>
+						{msg.text || `${msg.attachedFiles.length} ${msg.attachedFiles.length === 1 ? "file" : "files"}`}
+					</p>
+				</div>
+			)}
+			{!editing && (
+				<div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+					{/* Edit */}
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Edit message"
+						onClick={() => { setDraft(msg.text); setEditing(true); }}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+							<path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
+						</svg>
+					</button>
+					{/* Send now */}
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Send now"
+						onClick={() => onSendNow(msg.id)}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M12 19V5" />
+							<path d="m5 12 7-7 7 7" />
+						</svg>
+					</button>
+					{/* Delete */}
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Remove from queue"
+						onClick={() => onRemove(msg.id)}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M3 6h18" />
+							<path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+							<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+						</svg>
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
 function AttachmentStrip({
 	files,
 	compact,
@@ -162,26 +320,7 @@ function AttachmentStrip({
 	if (files.length === 0) {return null;}
 
 	return (
-		<div className={`${compact ? "px-2" : "px-3"} pb-2`}>
-			<div className="flex items-center justify-between mb-1.5">
-				<span
-					className="text-[10px] font-medium uppercase tracking-wider"
-					style={{ color: "var(--color-text-muted)" }}
-				>
-					{files.length}{" "}
-					{files.length === 1 ? "file" : "files"} attached
-				</span>
-				{files.length > 1 && (
-					<button
-						type="button"
-						onClick={onClearAll}
-						className="text-[10px] font-medium px-1.5 py-0.5 rounded hover:opacity-80 transition-opacity"
-						style={{ color: "var(--color-text-muted)" }}
-					>
-						Clear all
-					</button>
-				)}
-			</div>
+		<div className={`${compact ? "px-2" : "px-3"} pt-2`}>
 			<div
 				className="flex gap-2 overflow-x-auto pb-1"
 				style={{ scrollbarWidth: "thin" }}
@@ -235,29 +374,45 @@ function AttachmentStrip({
 							</button>
 
 							{category === "image" ? (
-								/* Image thumbnail preview */
-								<div className="flex flex-col items-center" style={{ width: 96 }}>
-									<img
-										src={`/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`}
-										alt={af.name}
-										className="w-full rounded-t-xl object-cover"
-										style={{ height: 56, background: "var(--color-bg-secondary)" }}
-										onError={(e) => {
-											(e.currentTarget as HTMLImageElement).style.display = "none";
-										}}
-									/>
-									<p
-										className="text-[10px] font-medium truncate w-full px-2 py-1.5 text-center"
-										style={{ color: "var(--color-text)" }}
-										title={af.path}
-									>
-										{af.name}
-									</p>
-								</div>
+								/* Image thumbnail — no filename */
+								<img
+									src={af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`}
+									alt={af.name}
+									className="block rounded-xl object-cover"
+									style={{
+										height: 80,
+										width: "auto",
+										minWidth: 60,
+										maxWidth: 140,
+										opacity: af.uploading ? 0.6 : 1,
+										background: "var(--color-bg-secondary)",
+									}}
+									onError={(e) => {
+										(e.currentTarget as HTMLImageElement).style.display = "none";
+									}}
+								/>
+							) : category === "pdf" && af.path ? (
+								/* PDF thumbnail via Quick Look */
+								<img
+									src={`/api/workspace/thumbnail?path=${encodeURIComponent(af.path)}&size=200`}
+									alt={af.name}
+									className="block rounded-xl object-cover"
+									style={{
+										height: 80,
+										width: "auto",
+										minWidth: 60,
+										maxWidth: 140,
+										opacity: af.uploading ? 0.6 : 1,
+										background: "var(--color-bg-secondary)",
+									}}
+									onError={(e) => {
+										(e.currentTarget as HTMLImageElement).style.display = "none";
+									}}
+								/>
 							) : (
-								<div className="flex items-center gap-2.5 px-3 py-2.5">
+								<div className="flex items-center gap-2.5 px-3 py-2.5" style={{ opacity: af.uploading ? 0.6 : 1 }}>
 									<div
-										className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+										className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
 										style={{
 											background: meta.bg,
 											color: meta.fg,
@@ -269,16 +424,16 @@ function AttachmentStrip({
 										<p
 											className="text-[11px] font-medium truncate"
 											style={{ color: "var(--color-text)" }}
-											title={af.path}
+											title={af.path || af.name}
 										>
 											{af.name}
 										</p>
 										<p
 											className="text-[9px] truncate"
 											style={{ color: "var(--color-text-muted)" }}
-											title={af.path}
+											title={af.path || af.name}
 										>
-											{short}
+											{af.uploading ? "Uploading..." : short}
 										</p>
 									</div>
 								</div>
@@ -296,6 +451,7 @@ function AttachmentStrip({
 
 type ParsedPart =
 	| { type: "text"; text: string }
+	| { type: "user-message"; id?: string; text: string }
 	| { type: "reasoning"; text: string; state?: string }
 	| {
 			type: "dynamic-tool";
@@ -306,7 +462,7 @@ type ParsedPart =
 			output?: Record<string, unknown>;
 		};
 
-function createStreamParser() {
+export function createStreamParser() {
 	const parts: ParsedPart[] = [];
 	let currentTextIdx = -1;
 	let currentReasoningIdx = -1;
@@ -315,6 +471,15 @@ function createStreamParser() {
 		const t = event.type as string;
 
 		switch (t) {
+			case "user-message":
+				currentTextIdx = -1;
+				currentReasoningIdx = -1;
+				parts.push({
+					type: "user-message",
+					id: event.id as string | undefined,
+					text: (event.text as string) ?? "",
+				});
+				break;
 			case "reasoning-start":
 				parts.push({
 					type: "reasoning",
@@ -458,6 +623,15 @@ type QueuedMessage = {
 	createdAt: number;
 };
 
+export type SubagentSpawnInfo = {
+	childSessionKey: string;
+	runId: string;
+	task: string;
+	label?: string;
+	parentSessionId: string;
+	status?: "running" | "completed" | "error";
+};
+
 type ChatPanelProps = {
 	/** When set, scopes sessions to this file and prepends content as context. */
 	fileContext?: FileContext;
@@ -473,6 +647,16 @@ type ChatPanelProps = {
 	onActiveSessionChange?: (sessionId: string | null) => void;
 	/** Called when session list needs refresh (for external sidebar). */
 	onSessionsChange?: () => void;
+	/** Called when the agent spawns a subagent. */
+	onSubagentSpawned?: (info: SubagentSpawnInfo) => void;
+	/** Called when user clicks a subagent card in the chat to view its output. */
+	onSubagentClick?: (task: string) => void;
+	/** Called when user clicks an inline file path in chat output. */
+	onFilePathClick?: (path: string) => Promise<boolean | void> | boolean | void;
+	/** Called when user deletes the current session (e.g. from header menu). */
+	onDeleteSession?: (sessionId: string) => void;
+	/** Called when user renames the current session. */
+	onRenameSession?: (sessionId: string, newTitle: string) => void;
 };
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
@@ -485,6 +669,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			onFileChanged,
 			onActiveSessionChange,
 			onSessionsChange,
+			onSubagentSpawned,
+			onSubagentClick,
+			onFilePathClick,
+			onDeleteSession,
+			onRenameSession,
 		},
 		ref,
 	) {
@@ -521,6 +710,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+		const [rawView, setRawView] = useState(false);
 
 		const filePath = fileContext?.path ?? null;
 
@@ -865,6 +1055,48 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			// eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
 		}, []);
 
+		// ── Poll for subagent spawns during active streaming ──
+		const [hasRunningSubagents, setHasRunningSubagents] = useState(false);
+
+		useEffect(() => {
+			if (!currentSessionId || !onSubagentSpawned) {return;}
+			let cancelled = false;
+
+			const poll = async () => {
+				try {
+					const res = await fetch(
+						`/api/chat/subagents?sessionId=${encodeURIComponent(currentSessionId)}`,
+					);
+					if (cancelled || !res.ok) {return;}
+					const data = await res.json();
+					const subagents: Array<{
+						sessionKey: string;
+						runId: string;
+						task: string;
+						label?: string;
+						status: "running" | "completed" | "error";
+					}> = data.subagents ?? [];
+					let anyRunning = false;
+					for (const sa of subagents) {
+						if (sa.status === "running") {anyRunning = true;}
+						onSubagentSpawned({
+							childSessionKey: sa.sessionKey,
+							runId: sa.runId,
+							task: sa.task,
+							label: sa.label,
+							parentSessionId: currentSessionId,
+							status: sa.status,
+						});
+					}
+					if (!cancelled) {setHasRunningSubagents(anyRunning);}
+				} catch { /* ignore */ }
+			};
+
+			void poll();
+			const id = setInterval(poll, 3_000);
+			return () => { cancelled = true; clearInterval(id); };
+		}, [currentSessionId, onSubagentSpawned]);
+
 		// ── Post-stream side-effects (file-reload, session refresh) ──
 		// Message persistence is handled server-side by ActiveRunManager,
 		// so we only refresh the file sessions list and notify the parent
@@ -921,34 +1153,44 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		// Ref for handleNewSession so handleEditorSubmit doesn't depend on the hook order
 		const handleNewSessionRef = useRef<() => void>(() => {});
 
-		/** Submit from the Tiptap editor (called on Enter or send button). */
+		/** Submit from the Tiptap editor (called on Enter or send button).
+		 *  `overrideAttachments` is used by the queue system to pass saved attachments directly. */
 		const handleEditorSubmit = useCallback(
 			async (
 				text: string,
 				mentionedFiles: Array<{ name: string; path: string }>,
+				overrideAttachments?: AttachedFile[],
 			) => {
 				const hasText = text.trim().length > 0;
 				const hasMentions = mentionedFiles.length > 0;
-				const hasFiles = attachedFiles.length > 0;
+				// Use override attachments (from queue) or current state
+				const readyFiles = overrideAttachments
+					? overrideAttachments.filter((f) => !f.uploading && f.path)
+					: attachedFiles.filter((f) => !f.uploading && f.path);
+				const hasFiles = readyFiles.length > 0;
 				if (!hasText && !hasMentions && !hasFiles) {
 					return;
 				}
 
 				const userText = text.trim();
-				const currentAttachments = [...attachedFiles];
-
-				// Clear attachments
-				if (currentAttachments.length > 0) {
-					setAttachedFiles([]);
-				}
+				const currentAttachments = [...readyFiles];
 
 				if (userText.toLowerCase() === "/new") {
+					// Revoke blob URLs before clearing
+					for (const f of attachedFiles) {
+						if (f.localUrl) {URL.revokeObjectURL(f.localUrl);}
+					}
+					setAttachedFiles([]);
 					handleNewSessionRef.current();
 					return;
 				}
 
 				// Queue the message if the agent is still running.
 				if (isStreaming) {
+					// Clear attachment strip but keep blob URLs alive for queue thumbnails
+					if (!overrideAttachments) {
+						setAttachedFiles([]);
+					}
 					setQueuedMessages((prev) => [
 						...prev,
 						{
@@ -960,6 +1202,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						},
 					]);
 					return;
+				}
+
+				// Clear attachments (revoke blob URLs to free memory)
+				if (!overrideAttachments && currentAttachments.length > 0) {
+					for (const f of attachedFiles) {
+						if (f.localUrl) {URL.revokeObjectURL(f.localUrl);}
+					}
+					setAttachedFiles([]);
 				}
 
 				let sessionId = currentSessionId;
@@ -1035,9 +1285,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			if (wasStreaming && isNowReady && queuedMessages.length > 0) {
 				const [next, ...rest] = queuedMessages;
 				setQueuedMessages(rest);
+				// Revoke blob URLs from queued attachments (no longer needed for thumbnails)
+				for (const f of next.attachedFiles) {
+					if (f.localUrl) {URL.revokeObjectURL(f.localUrl);}
+				}
 				// Use a microtask so React can settle the status update first.
 				queueMicrotask(() => {
-					void handleEditorSubmit(next.text, next.mentionedFiles);
+					void handleEditorSubmit(next.text, next.mentionedFiles, next.attachedFiles);
 				});
 			}
 		}, [status, queuedMessages, handleEditorSubmit]);
@@ -1141,6 +1395,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			isFirstFileMessageRef.current = true;
 			newSessionPendingRef.current = false;
 			setQueuedMessages([]);
+			// Focus the chat input after state updates so "New Chat" is ready to type.
+			requestAnimationFrame(() => {
+				editorRef.current?.focus();
+			});
 		}, [setMessages, onActiveSessionChange, stop]);
 
 		// Keep the ref in sync so handleEditorSubmit can call it
@@ -1203,6 +1461,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
 		}, []);
 
+		const updateQueuedMessageText = useCallback((id: string, text: string) => {
+			setQueuedMessages((prev) => prev.map((m) => m.id === id ? { ...m, text } : m));
+		}, []);
+
 		/** Force-send: stop the agent, then immediately submit this queued message. */
 		const forceSendQueuedMessage = useCallback(
 			async (id: string) => {
@@ -1214,7 +1476,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				await handleStop();
 				// Submit the message after a short delay to let status settle.
 				setTimeout(() => {
-					void handleEditorSubmit(msg.text, msg.mentionedFiles);
+					void handleEditorSubmit(msg.text, msg.mentionedFiles, msg.attachedFiles);
 				}, 100);
 			},
 			[queuedMessages, handleStop, handleEditorSubmit],
@@ -1240,41 +1502,71 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		);
 
 		const removeAttachment = useCallback((id: string) => {
-			setAttachedFiles((prev) =>
-				prev.filter((f) => f.id !== id),
-			);
+			setAttachedFiles((prev) => {
+				const removed = prev.find((f) => f.id === id);
+				if (removed?.localUrl) {URL.revokeObjectURL(removed.localUrl);}
+				return prev.filter((f) => f.id !== id);
+			});
 		}, []);
 
 		const clearAllAttachments = useCallback(() => {
-			setAttachedFiles([]);
+			setAttachedFiles((prev) => {
+				for (const f of prev) {
+					if (f.localUrl) {URL.revokeObjectURL(f.localUrl);}
+				}
+				return [];
+			});
 		}, []);
 
-		/** Upload native files (e.g. dropped from Finder/Desktop) and attach them. */
+		/** Upload native files (e.g. dropped from Finder/Desktop) and attach them.
+		 *  Shows files instantly with a local preview, then uploads in the background. */
 		const uploadAndAttachNativeFiles = useCallback(
-			async (files: FileList) => {
-				const uploaded: AttachedFile[] = [];
-				for (const file of Array.from(files)) {
-					try {
-						const form = new FormData();
-						form.append("file", file);
-						const res = await fetch("/api/workspace/upload", {
-							method: "POST",
-							body: form,
+			(files: FileList) => {
+				const fileArray = Array.from(files);
+
+				// Immediately add placeholder entries with local blob URLs
+				const placeholders: AttachedFile[] = fileArray.map((file) => ({
+					id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+					name: file.name,
+					path: "",
+					uploading: true,
+					localUrl: URL.createObjectURL(file),
+				}));
+				setAttachedFiles((prev) => [...prev, ...placeholders]);
+
+				// Upload each file in the background and update the entry
+				for (let i = 0; i < fileArray.length; i++) {
+					const file = fileArray[i];
+					const placeholderId = placeholders[i].id;
+					const localUrl = placeholders[i].localUrl;
+
+					const form = new FormData();
+					form.append("file", file);
+					fetch("/api/workspace/upload", {
+						method: "POST",
+						body: form,
+					})
+						.then((res) => res.ok ? res.json() : null)
+						.then((json: { ok?: boolean; path?: string } | null) => {
+							if (json?.ok && json.path) {
+								// Replace placeholder with the real uploaded file
+								setAttachedFiles((prev) =>
+									prev.map((f) =>
+										f.id === placeholderId
+											? { ...f, path: json.path!, uploading: false }
+											: f,
+									),
+								);
+							} else {
+								// Upload failed — remove the placeholder
+								setAttachedFiles((prev) => prev.filter((f) => f.id !== placeholderId));
+								if (localUrl) {URL.revokeObjectURL(localUrl);}
+							}
+						})
+						.catch(() => {
+							setAttachedFiles((prev) => prev.filter((f) => f.id !== placeholderId));
+							if (localUrl) {URL.revokeObjectURL(localUrl);}
 						});
-						if (!res.ok) { continue; }
-						const json = (await res.json()) as { ok?: boolean; path?: string };
-						if (!json.ok || !json.path) { continue; }
-						uploaded.push({
-							id: `${json.path}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-							name: file.name,
-							path: json.path,
-						});
-					} catch {
-						// skip files that fail to upload
-					}
-				}
-				if (uploaded.length > 0) {
-					setAttachedFiles((prev) => [...prev, ...uploaded]);
 				}
 			},
 			[],
@@ -1291,70 +1583,91 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						: status === "submitted"
 							? "Thinking..."
 							: status === "streaming"
-								? "Streaming..."
+								? (hasRunningSubagents ? "Waiting for subagents..." : "Streaming...")
 								: status === "error"
 									? "Error"
 									: status;
+
+		// Show an inline Unicode spinner in the message flow when the AI
+		// is thinking/streaming but hasn't produced visible text yet.
+		const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+		const lastAssistantHasText =
+			lastMsg?.role === "assistant" &&
+			lastMsg.parts.some((p) => p.type === "text" && (p as { text: string }).text.length > 0);
+		const showInlineSpinner = isStreaming && !lastAssistantHasText;
 
 		// ── Render ──
 
 		return (
 			<div
-				ref={scrollContainerRef}
-				className="h-full overflow-y-auto"
+				className="h-full flex flex-col"
+				style={{ background: "var(--color-main-bg)" }}
 			>
-				<div className="flex flex-col min-h-full">
 				{/* Header — sticky glass bar */}
 				<header
-					className={`${compact ? "px-3 py-2" : "px-3 py-2 md:px-6 md:py-3"} flex items-center justify-between sticky top-0 z-20 backdrop-blur-md`}
+					className={`${compact ? "px-3 py-2" : "px-3 py-2 md:px-6 md:py-3"} flex items-center justify-between z-20`}
 					style={{
 						background: "var(--color-bg-glass)",
 					}}
 				>
 					<div className="min-w-0 flex-1">
 						{compact && fileContext ? (
-							<>
-								<h2
-									className="text-xs font-semibold truncate"
-									style={{
-										color: "var(--color-text)",
-									}}
-								>
-									Chat: {fileContext.filename}
-								</h2>
-								<p
-									className="text-[10px]"
-									style={{
-										color: "var(--color-text-muted)",
-									}}
-								>
-									{statusLabel}
-								</p>
-							</>
+							<h2
+								className="text-xs font-semibold truncate"
+								style={{
+									color: "var(--color-text)",
+								}}
+							>
+								Chat: {fileContext.filename}
+							</h2>
 						) : (
-							<>
-								<h2
-									className="text-sm font-semibold"
-									style={{
-										color: "var(--color-text)",
-									}}
-								>
-									{currentSessionId
-										? (sessionTitle || "Chat Session")
-										: "New Chat"}
-								</h2>
-								<p
-									className="text-xs"
-									style={{
-										color: "var(--color-text-muted)",
-									}}
-								>
-									{statusLabel}
-								</p>
-							</>
+							<h2
+								className="text-sm font-semibold"
+								style={{
+									color: "var(--color-text)",
+								}}
+							>
+								{currentSessionId
+									? (sessionTitle || "Chat Session")
+									: "New Chat"}
+							</h2>
 						)}
 					</div>
-					<div className="flex gap-1 shrink-0">
+					<div className="flex items-center gap-1 shrink-0">
+						{currentSessionId && onDeleteSession && (
+							<DropdownMenu>
+								<DropdownMenuTrigger
+									className="p-1.5 rounded-lg"
+									style={{ color: "var(--color-text-muted)" }}
+									title="More options"
+									aria-label="More options"
+								>
+									<svg
+										width="16"
+										height="16"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+									>
+										<circle cx="12" cy="12" r="1" />
+										<circle cx="5" cy="12" r="1" />
+										<circle cx="19" cy="12" r="1" />
+									</svg>
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="end" side="bottom">
+									<DropdownMenuItem
+										variant="destructive"
+										onSelect={() => onDeleteSession(currentSessionId)}
+									>
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+										Delete
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						)}
 						{compact && (
 							<button
 								type="button"
@@ -1386,7 +1699,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				{/* File-scoped session tabs (compact mode) */}
 				{compact && fileContext && fileSessions.length > 0 && (
 					<div
-						className="px-2 py-1.5 border-b flex gap-1 overflow-x-auto sticky top-[41px] z-20 backdrop-blur-md"
+						className="px-2 py-1.5 border-b flex gap-1 overflow-x-auto z-20"
 						style={{
 							borderColor: "var(--color-border)",
 							background: "var(--color-bg-glass)",
@@ -1423,21 +1736,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					</div>
 				)}
 
+				<div
+					ref={scrollContainerRef}
+					className="flex-1 overflow-y-auto min-h-0"
+				>
 				{/* Messages */}
 				<div
-					className={`flex-1 ${compact ? "px-3" : "px-6"}`}
+					className={`${compact ? "px-3" : "px-6"}`}
 				>
 					{loadingSession ? (
 						<div className="flex items-center justify-center h-full min-h-[60vh]">
 							<div className="text-center">
-								<div
-									className="w-6 h-6 border-2 rounded-full animate-spin mx-auto mb-3"
-									style={{
-										borderColor:
-											"var(--color-border)",
-										borderTopColor:
-											"var(--color-accent)",
-									}}
+								<UnicodeSpinner
+									name="braille"
+									className="block text-2xl mx-auto mb-3"
+									style={{ color: "var(--color-text-muted)" }}
 								/>
 								<p
 									className="text-xs"
@@ -1489,13 +1802,31 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						<div
 							className={`${compact ? "" : "max-w-2xl mx-auto"} py-3`}
 						>
-							{messages.map((message, i) => (
-								<ChatMessage
-									key={message.id}
-									message={message}
-									isStreaming={isStreaming && i === messages.length - 1}
+						{rawView ? (
+							<pre
+								className="text-xs whitespace-pre-wrap break-all font-mono p-4 rounded-xl"
+								style={{ color: "var(--color-text)", background: "var(--color-surface-hover)" }}
+							>
+								{JSON.stringify(messages, null, 2)}
+							</pre>
+						) : messages.map((message, i) => (
+							<ChatMessage
+								key={message.id}
+								message={message}
+								isStreaming={isStreaming && i === messages.length - 1}
+								onSubagentClick={onSubagentClick}
+								onFilePathClick={onFilePathClick}
+							/>
+						))}
+						{showInlineSpinner && (
+							<div className="py-3 min-w-0">
+								<UnicodeSpinner
+									name="pulse"
+									className="text-base"
+									style={{ color: "var(--color-text-muted)" }}
 								/>
-							))}
+							</div>
+						)}
 							<div ref={messagesEndRef} />
 						</div>
 					)}
@@ -1539,10 +1870,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						<p className="text-xs">{error.message}</p>
 					</div>
 				)}
+				</div>
 
-				{/* Input — sticky glass bar at bottom */}
+				{/* Input bar at bottom */}
 				<div
-					className={`${compact ? "px-3 py-2" : "px-3 pb-3 pt-0 md:px-6 md:pb-5"} sticky bottom-0 z-20 backdrop-blur-md`}
+					className={`${compact ? "px-3 py-2" : "px-3 pb-3 pt-0 md:px-6 md:pb-5"} z-20`}
 					style={{ background: "var(--color-bg-glass)" }}
 				>
 					<div
@@ -1550,12 +1882,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					>
 						<div
 							data-chat-drop-target=""
-							className="rounded-3xl overflow-hidden chat-input-drop-target"
+							className="rounded-3xl overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow] duration-150 ease-out data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!"
 							style={{
-								background:
-									"var(--color-chat-input-bg)",
-								border: "1px solid var(--color-border)",
-								boxShadow: "0 0 32px rgba(0,0,0,0.07)",
+								background: "var(--color-surface)",
+								borderColor: "var(--color-border)",
 							}}
 						onDragOver={(e) => {
 							if (
@@ -1598,73 +1928,52 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							if (files && files.length > 0) {
 								e.preventDefault();
 								e.stopPropagation();
-								void uploadAndAttachNativeFiles(files);
+								 uploadAndAttachNativeFiles(files);
 							}
 						}}
 						>
 						{/* Queued messages indicator */}
 						{queuedMessages.length > 0 && (
-                            <div className={compact ? "px-2 pt-2" : "px-3 pt-3"}>
+							<div className={compact ? "px-2 pt-2" : "px-3 pt-3"}>
 								<div
-									className="rounded-xl overflow-hidden"
+									className="rounded-xl border overflow-hidden"
 									style={{
-										border: "1px dashed var(--color-border-strong)",
-										background: "var(--color-bg-elevated)",
+										background: "var(--color-surface)",
+										borderColor: "var(--color-border)",
+										boxShadow: "var(--shadow-sm)",
 									}}
 								>
 									<div
-										className="flex items-center justify-between px-3 py-1.5"
-										style={{ borderBottom: "1px solid var(--color-border)" }}
+										className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+										style={{ color: "var(--color-text-muted)", background: "var(--color-surface-hover)" }}
 									>
-										<span
-											className="text-[11px] font-medium tracking-wide uppercase"
-											style={{ color: "var(--color-text-muted)", fontFamily: "var(--font-mono, monospace)" }}
-										>
-											Queued ({queuedMessages.length})
-										</span>
+										Queue ({queuedMessages.length})
 									</div>
-									<div className="flex flex-col gap-1 p-1.5">
-										{queuedMessages.map((msg) => (
-											<div
+									<div className="flex flex-col p-2">
+										{queuedMessages.map((msg, idx) => (
+											<QueueItem
 												key={msg.id}
-												className="flex items-start gap-2 rounded-lg px-2.5 py-2 group"
-												style={{ background: "var(--color-bg-secondary)" }}
-											>
-												<p
-													className="flex-1 text-[13px] leading-[1.45] line-clamp-3"
-													style={{ color: "var(--color-text)", whiteSpace: "pre-wrap" }}
-												>
-													{msg.text || (msg.attachedFiles.length > 0 ? `${msg.attachedFiles.length} file(s)` : "")}
-												</p>
-												<div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-													<button
-														type="button"
-														className="rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors hover:bg-[var(--color-bg)]"
-														style={{ color: "var(--color-accent)" }}
-														title="Stop agent and send this message now"
-														onClick={() => forceSendQueuedMessage(msg.id)}
-													>
-														Send now
-													</button>
-													<button
-														type="button"
-														className="rounded-md p-1 transition-colors hover:bg-[var(--color-bg)]"
-														style={{ color: "var(--color-text-muted)" }}
-														title="Remove from queue"
-														onClick={() => removeQueuedMessage(msg.id)}
-													>
-														<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-															<path d="M18 6 6 18" />
-															<path d="m6 6 12 12" />
-														</svg>
-													</button>
-												</div>
-											</div>
+												msg={msg}
+												idx={idx}
+												onEdit={updateQueuedMessageText}
+												onSendNow={forceSendQueuedMessage}
+												onRemove={removeQueuedMessage}
+											/>
 										))}
 									</div>
 								</div>
 							</div>
 						)}
+
+						{/* Attachment preview strip */}
+						<AttachmentStrip
+							files={attachedFiles}
+							compact={compact}
+							onRemove={removeAttachment}
+							onClearAll={
+								clearAllAttachments
+							}
+						/>
 
 							<ChatEditor
 								ref={editorRef}
@@ -1686,16 +1995,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								disabled={loadingSession}
 								compact={compact}
 							/>
-
-						{/* Attachment preview strip */}
-						<AttachmentStrip
-							files={attachedFiles}
-							compact={compact}
-							onRemove={removeAttachment}
-							onClearAll={
-								clearAllAttachments
-							}
-						/>
 
 						{/* Toolbar row */}
 							<div
@@ -1735,54 +2034,82 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								</div>
 							{/* Send / Stop / Queue buttons */}
 							<div className="flex items-center gap-1.5">
-							{isStreaming && (
-								<button
-									type="button"
-									onClick={() => handleStop()}
-									className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center`}
-									style={{
-										background: "var(--color-text)",
-										color: "var(--color-bg)",
-									}}
-									title="Stop generating"
-								>
-									<svg
-										width="8"
-										height="8"
-										viewBox="0 0 10 10"
-										fill="currentColor"
+								{isStreaming && (
+									<button
+										type="button"
+										onClick={() => handleStop()}
+										className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center`}
+										style={{
+											background: "var(--color-text)",
+											color: "var(--color-bg)",
+										}}
+										title="Stop generating"
 									>
-										<rect width="10" height="10" rx="1.5" />
-									</svg>
-								</button>
-							)}
-								<button
-									type="button"
-									onClick={() => {
-										editorRef.current?.submit();
-									}}
-									disabled={
-										(editorEmpty &&
-											attachedFiles.length ===
-												0) ||
-										loadingSession
-									}
-									className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed`}
-									style={{
-										background:
-											!editorEmpty ||
-											attachedFiles.length >
-												0
-												? isStreaming
-													? "var(--color-text-muted)"
-													: "var(--color-accent)"
-												: "var(--color-border-strong)",
-										color: "white",
-									}}
-									title={isStreaming ? "Queue message" : "Send message"}
-								>
-									{isStreaming && !editorEmpty ? (
-										/* Queue icon: stacked lines */
+										<svg
+											width="8"
+											height="8"
+											viewBox="0 0 10 10"
+											fill="currentColor"
+										>
+											<rect width="10" height="10" rx="1.5" />
+										</svg>
+									</button>
+								)}
+								{isStreaming ? (
+									<button
+										type="button"
+										onClick={() => {
+											editorRef.current?.submit();
+										}}
+										disabled={
+											(editorEmpty &&
+												attachedFiles.length === 0) ||
+											loadingSession
+										}
+										className="h-7 px-3 rounded-full flex items-center gap-1.5 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+										style={{
+											background:
+												!editorEmpty || attachedFiles.length > 0
+													? "var(--color-accent)"
+													: "var(--color-surface-hover)",
+											color:
+												!editorEmpty || attachedFiles.length > 0
+													? "white"
+													: "var(--color-text-muted)",
+										}}
+										title="Add to queue"
+									>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+											<polyline points="9 10 4 15 9 20" />
+											<path d="M20 4v7a4 4 0 0 1-4 4H4" />
+										</svg>
+										Queue
+									</button>
+								) : (
+									<button
+										type="button"
+										onClick={() => {
+											editorRef.current?.submit();
+										}}
+										disabled={
+											(editorEmpty &&
+												attachedFiles.length === 0) ||
+											loadingSession
+										}
+										className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
+										style={{
+											background:
+												!editorEmpty ||
+												attachedFiles.length > 0
+													? "var(--color-accent)"
+													: "var(--color-text-muted)",
+											color:
+												!editorEmpty || attachedFiles.length > 0
+													? "white"
+													: "var(--color-bg)",
+										}}
+										title="Send message"
+									>
 										<svg
 											width="14"
 											height="14"
@@ -1793,33 +2120,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 											strokeLinecap="round"
 											strokeLinejoin="round"
 										>
-											<path d="M16 3h5v5" />
-											<path d="m21 3-7 7" />
 											<path d="M12 19V5" />
 											<path d="m5 12 7-7 7 7" />
 										</svg>
-									) : (
-										/* Normal send arrow */
-									<svg
-										width="14"
-										height="14"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="2.5"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									>
-										<path d="M12 19V5" />
-										<path d="m5 12 7-7 7 7" />
-									</svg>
-									)}
-								</button>
+									</button>
+								)}
 							</div>
 							</div>
 						</div>
 					</div>
-				</div>
 				</div>
 
 				{/* File picker modal */}
@@ -1831,16 +2140,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					onSelect={handleFilesSelected}
 				/>
 
-				{/* Drop highlight for sidebar drag-and-drop */}
-				<style>{`
-					.chat-input-drop-target[data-drag-hover] {
-						outline: 2px dashed var(--color-accent) !important;
-						outline-offset: -2px;
-						box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 15%, transparent),
-						            0 0 32px rgba(0,0,0,0.07) !important;
-						transition: outline 150ms ease, box-shadow 150ms ease;
-					}
-				`}</style>
 			</div>
 		);
 	},

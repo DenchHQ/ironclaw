@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { resolveOpenClawStateDir, resolveWorkspaceRoot } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -69,12 +69,12 @@ function scanSkillDir(dir: string, source: string): SkillEntry[] {
 }
 
 export async function GET() {
-  const home = homedir();
-  const openclawDir = join(home, ".openclaw");
+  const stateDir = resolveOpenClawStateDir();
+  const workspaceRoot = resolveWorkspaceRoot() ?? join(stateDir, "workspace");
 
-  const managedSkills = scanSkillDir(join(openclawDir, "skills"), "managed");
+  const managedSkills = scanSkillDir(join(stateDir, "skills"), "managed");
   const workspaceSkills = scanSkillDir(
-    join(openclawDir, "workspace", "skills"),
+    join(workspaceRoot, "skills"),
     "workspace",
   );
 

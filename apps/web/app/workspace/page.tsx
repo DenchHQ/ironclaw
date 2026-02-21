@@ -8,7 +8,8 @@ import { useWorkspaceWatcher } from "../hooks/use-workspace-watcher";
 import { ObjectTable } from "../components/workspace/object-table";
 import { ObjectKanban } from "../components/workspace/object-kanban";
 import { DocumentView } from "../components/workspace/document-view";
-import { FileViewer } from "../components/workspace/file-viewer";
+import { FileViewer, isSpreadsheetFile } from "../components/workspace/file-viewer";
+import { HtmlViewer } from "../components/workspace/html-viewer";
 import { CodeViewer } from "../components/workspace/code-viewer";
 import { MediaViewer, detectMediaType, type MediaType } from "../components/workspace/media-viewer";
 import { DatabaseViewer, DuckDBMissing } from "../components/workspace/database-viewer";
@@ -16,7 +17,8 @@ import { Breadcrumbs } from "../components/workspace/breadcrumbs";
 import { ChatSessionsSidebar } from "../components/workspace/chat-sessions-sidebar";
 import { EmptyState } from "../components/workspace/empty-state";
 import { ReportViewer } from "../components/charts/report-viewer";
-import { ChatPanel, type ChatPanelHandle } from "../components/chat-panel";
+import { ChatPanel, type ChatPanelHandle, type SubagentSpawnInfo } from "../components/chat-panel";
+import { SubagentPanel } from "../components/subagent-panel";
 import { EntryDetailModal } from "../components/workspace/entry-detail-modal";
 import { useSearchIndex } from "@/lib/search-index";
 import { parseWorkspaceLink, isWorkspaceLink } from "@/lib/workspace-links";
@@ -26,7 +28,8 @@ import { CronJobDetail } from "../components/cron/cron-job-detail";
 import type { CronJob, CronJobsResponse } from "../types/cron";
 import { useIsMobile } from "../hooks/use-mobile";
 import { ObjectFilterBar } from "../components/workspace/object-filter-bar";
-import { type FilterGroup, type SavedView, emptyFilterGroup, matchesFilter } from "@/lib/object-filters";
+import { type FilterGroup, type SortRule, type SavedView, emptyFilterGroup, serializeFilters } from "@/lib/object-filters";
+import { UnicodeSpinner } from "../components/unicode-spinner";
 
 // --- Types ---
 
@@ -77,6 +80,9 @@ type ObjectData = {
   effectiveDisplayField?: string;
   savedViews?: import("@/lib/object-filters").SavedView[];
   activeView?: string;
+  totalCount?: number;
+  page?: number;
+  pageSize?: number;
 };
 
 type FileData = {
@@ -92,12 +98,27 @@ type ContentState =
   | { kind: "file"; data: FileData; filename: string }
   | { kind: "code"; data: FileData; filename: string }
   | { kind: "media"; url: string; mediaType: MediaType; filename: string; filePath: string }
+  | { kind: "spreadsheet"; url: string; filename: string }
+  | { kind: "html"; rawUrl: string; contentUrl: string; filename: string }
   | { kind: "database"; dbPath: string; filename: string }
   | { kind: "report"; reportPath: string; filename: string }
   | { kind: "directory"; node: TreeNode }
   | { kind: "cron-dashboard" }
   | { kind: "cron-job"; jobId: string; job: CronJob }
   | { kind: "duckdb-missing" };
+
+type SidebarPreviewContent =
+  | { kind: "document"; data: FileData; title: string }
+  | { kind: "file"; data: FileData; filename: string }
+  | { kind: "code"; data: FileData; filename: string }
+  | { kind: "media"; url: string; mediaType: MediaType; filename: string; filePath: string }
+  | { kind: "database"; dbPath: string; filename: string }
+  | { kind: "directory"; path: string; name: string };
+
+type ChatSidebarPreviewState =
+  | { status: "loading"; path: string; filename: string }
+  | { status: "error"; path: string; filename: string; message: string }
+  | { status: "ready"; path: string; filename: string; content: SidebarPreviewContent };
 
 type WebSession = {
   id: string;
@@ -111,7 +132,7 @@ type WebSession = {
 
 /** Detect virtual paths (skills, memories) that live outside the main workspace. */
 function isVirtualPath(path: string): boolean {
-  return path.startsWith("~");
+  return path.startsWith("~") && !path.startsWith("~/");
 }
 
 /** Detect absolute filesystem paths (browse mode). */
@@ -119,12 +140,17 @@ function isAbsolutePath(path: string): boolean {
   return path.startsWith("/");
 }
 
+/** Detect home-relative filesystem paths (e.g. ~/Desktop/file.txt). */
+function isHomeRelativePath(path: string): boolean {
+  return path.startsWith("~/");
+}
+
 /** Pick the right file API endpoint based on virtual vs real vs absolute paths. */
 function fileApiUrl(path: string): string {
   if (isVirtualPath(path)) {
     return `/api/workspace/virtual-file?path=${encodeURIComponent(path)}`;
   }
-  if (isAbsolutePath(path)) {
+  if (isAbsolutePath(path) || isHomeRelativePath(path)) {
     return `/api/workspace/browse-file?path=${encodeURIComponent(path)}`;
   }
   return `/api/workspace/file?path=${encodeURIComponent(path)}`;
@@ -132,10 +158,78 @@ function fileApiUrl(path: string): string {
 
 /** Pick the right raw file URL for media preview. */
 function rawFileUrl(path: string): string {
-  if (isAbsolutePath(path)) {
+  if (isAbsolutePath(path) || isHomeRelativePath(path)) {
     return `/api/workspace/browse-file?path=${encodeURIComponent(path)}&raw=true`;
   }
   return `/api/workspace/raw-file?path=${encodeURIComponent(path)}`;
+}
+
+const LEFT_SIDEBAR_MIN = 200;
+const LEFT_SIDEBAR_MAX = 480;
+const RIGHT_SIDEBAR_MIN = 260;
+const RIGHT_SIDEBAR_MAX = 900;
+const STORAGE_LEFT = "ironclaw-workspace-left-sidebar-width";
+const STORAGE_RIGHT = "ironclaw-workspace-right-sidebar-width";
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Vertical resize handle; uses cursor position so the handle follows the mouse (no stuck-at-limit). */
+function ResizeHandle({
+  mode,
+  containerRef,
+  min,
+  max,
+  onResize,
+}: {
+  mode: "left" | "right";
+  containerRef: React.RefObject<HTMLElement | null>;
+  min: number;
+  max: number;
+  onResize: (width: number) => void;
+}) {
+  const [isDragging, setIsDragging] = useState(false);
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      const move = (ev: MouseEvent) => {
+        const el = containerRef.current;
+        if (!el) {return;}
+        const rect = el.getBoundingClientRect();
+        const width =
+          mode === "left"
+            ? ev.clientX - rect.left
+            : rect.right - ev.clientX;
+        onResize(clamp(width, min, max));
+      };
+      const up = () => {
+        setIsDragging(false);
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        document.body.style.removeProperty("user-select");
+        document.body.style.removeProperty("cursor");
+        document.body.classList.remove("resizing");
+      };
+      document.body.style.setProperty("user-select", "none");
+      document.body.style.setProperty("cursor", "col-resize");
+      document.body.classList.add("resizing");
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    },
+    [containerRef, mode, min, max, onResize],
+  );
+  const showHover = isDragging || undefined;
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      onMouseDown={onMouseDown}
+      className={`cursor-col-resize flex justify-center transition-colors ${showHover ? "bg-blue-600/30" : "hover:bg-blue-600/30"}`}
+      style={{ position: "absolute", [mode === "left" ? "right" : "left"]: -2, top: 0, bottom: 0, width: 4, zIndex: 20 }}
+    />
+  );
 }
 
 /** Find a node in the tree by exact path. */
@@ -157,6 +251,36 @@ function findNode(
 function objectNameFromPath(path: string): string {
   const segments = path.split("/");
   return segments[segments.length - 1];
+}
+
+/** Infer a tree node type from filename extension for ad-hoc path previews. */
+function inferNodeTypeFromFileName(fileName: string): TreeNode["type"] {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "md" || ext === "mdx") {return "document";}
+  if (ext === "duckdb" || ext === "sqlite" || ext === "sqlite3" || ext === "db") {return "database";}
+  return "file";
+}
+
+/** Normalize chat path references (supports file:// URLs). */
+function normalizeChatPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed.startsWith("file://")) {
+    return trimmed;
+  }
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "file:") {
+      return trimmed;
+    }
+    const decoded = decodeURIComponent(url.pathname);
+    // Windows file URLs are /C:/... in URL form
+    if (/^\/[A-Za-z]:\//.test(decoded)) {
+      return decoded.slice(1);
+    }
+    return decoded;
+  } catch {
+    return trimmed;
+  }
 }
 
 /**
@@ -208,7 +332,7 @@ export default function WorkspacePage() {
   return (
     <Suspense fallback={
       <div className="flex h-screen items-center justify-center" style={{ background: "var(--color-bg)" }}>
-        <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: "var(--color-border)", borderTopColor: "var(--color-accent)" }} />
+        <UnicodeSpinner name="braille" className="text-2xl" style={{ color: "var(--color-text-muted)" }} />
       </div>
     }>
       <WorkspacePageInner />
@@ -225,12 +349,19 @@ function WorkspacePageInner() {
   const chatRef = useRef<ChatPanelHandle>(null);
   // Compact (file-scoped) chat panel ref for sidebar drag-and-drop
   const compactChatRef = useRef<ChatPanelHandle>(null);
+  // Root layout ref for resize handle position (handle follows cursor)
+  const layoutRef = useRef<HTMLDivElement>(null);
 
   // Live-reactive tree via SSE watcher (with browse-mode support)
   const {
     tree, loading: treeLoading, exists: workspaceExists, refresh: refreshTree,
+    reconnect: reconnectWorkspace,
     browseDir, setBrowseDir, parentDir: browseParentDir, workspaceRoot, openclawDir,
+    activeProfile,
+    showHidden, setShowHidden,
   } = useWorkspaceWatcher();
+
+  // handleProfileSwitch is defined below fetchSessions/fetchCronJobs (avoids TDZ)
 
   // Search index for @ mention fuzzy search (files + entries)
   const { search: searchIndex } = useSearchIndex();
@@ -239,12 +370,54 @@ function WorkspacePageInner() {
   const [activePath, setActivePath] = useState<string | null>(null);
   const [content, setContent] = useState<ContentState>({ kind: "none" });
   const [showChatSidebar, setShowChatSidebar] = useState(true);
+  const [chatSidebarPreview, setChatSidebarPreview] = useState<ChatSidebarPreviewState | null>(null);
 
   // Chat session state
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<WebSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [streamingSessionIds, setStreamingSessionIds] = useState<Set<string>>(new Set());
+
+  // Subagent tracking
+  const [subagents, setSubagents] = useState<SubagentSpawnInfo[]>([]);
+  const [activeSubagentKey, setActiveSubagentKey] = useState<string | null>(null);
+
+  const handleSubagentSpawned = useCallback((info: SubagentSpawnInfo) => {
+    setSubagents((prev) => {
+      const idx = prev.findIndex((sa) => sa.childSessionKey === info.childSessionKey);
+      if (idx >= 0) {
+        // Update status if changed
+        if (prev[idx].status === info.status) {return prev;}
+        const updated = [...prev];
+        updated[idx] = { ...prev[idx], ...info };
+        return updated;
+      }
+      return [...prev, info];
+    });
+  }, []);
+
+  const handleSelectSubagent = useCallback((sessionKey: string) => {
+    setActiveSubagentKey(sessionKey);
+  }, []);
+
+  const handleBackFromSubagent = useCallback(() => {
+    setActiveSubagentKey(null);
+  }, []);
+
+  // Navigate to a subagent panel when its card is clicked in the chat
+  const handleSubagentClickFromChat = useCallback((task: string) => {
+    const match = subagents.find((sa) => sa.task === task);
+    if (match) {
+      setActiveSubagentKey(match.childSessionKey);
+    }
+  }, [subagents]);
+
+  // Find the active subagent's info for the panel
+  const activeSubagent = useMemo(() => {
+    if (!activeSubagentKey) {return null;}
+    return subagents.find((sa) => sa.childSessionKey === activeSubagentKey) ?? null;
+  }, [activeSubagentKey, subagents]);
 
   // Cron jobs state
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
@@ -259,6 +432,49 @@ function WorkspacePageInner() {
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatSessionsOpen, setChatSessionsOpen] = useState(false);
+
+  // Sidebar collapse state (desktop only).
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+
+  // Resizable sidebar widths (desktop only; persisted in localStorage).
+  // Use static defaults so server and client match on first render (avoid hydration mismatch).
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(260);
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(320);
+  useEffect(() => {
+    const left = window.localStorage.getItem(STORAGE_LEFT);
+    const nLeft = left ? parseInt(left, 10) : NaN;
+    if (Number.isFinite(nLeft)) {
+      setLeftSidebarWidth(clamp(nLeft, LEFT_SIDEBAR_MIN, LEFT_SIDEBAR_MAX));
+    }
+    const right = window.localStorage.getItem(STORAGE_RIGHT);
+    const nRight = right ? parseInt(right, 10) : NaN;
+    if (Number.isFinite(nRight)) {
+      setRightSidebarWidth(clamp(nRight, RIGHT_SIDEBAR_MIN, RIGHT_SIDEBAR_MAX));
+    }
+  }, []);
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_LEFT, String(leftSidebarWidth));
+  }, [leftSidebarWidth]);
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_RIGHT, String(rightSidebarWidth));
+  }, [rightSidebarWidth]);
+
+  // Keyboard shortcuts: Cmd+B = toggle left sidebar, Cmd+Shift+B = toggle right sidebar
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          setRightSidebarCollapsed((v) => !v);
+        } else {
+          setLeftSidebarCollapsed((v) => !v);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Derive file context for chat sidebar directly from activePath (stable across loading).
   // Exclude reserved virtual paths (~chats, ~cron, etc.) where file-scoped chat is irrelevant.
@@ -300,12 +516,15 @@ function WorkspacePageInner() {
 
   // Fetch chat sessions
   const fetchSessions = useCallback(async () => {
+    setSessionsLoading(true);
     try {
       const res = await fetch("/api/web-sessions");
       const data = await res.json();
       setSessions(data.sessions ?? []);
     } catch {
       // ignore
+    } finally {
+      setSessionsLoading(false);
     }
   }, []);
 
@@ -316,6 +535,39 @@ function WorkspacePageInner() {
   const refreshSessions = useCallback(() => {
     setSidebarRefreshKey((k) => k + 1);
   }, []);
+
+  const handleDeleteSession = useCallback(
+    async (sessionId: string) => {
+      const res = await fetch(`/api/web-sessions/${sessionId}`, { method: "DELETE" });
+      if (!res.ok) {return;}
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(null);
+        setActiveSubagentKey(null);
+        const remaining = sessions.filter((s) => s.id !== sessionId);
+        if (remaining.length > 0) {
+          const next = remaining[0];
+          setActiveSessionId(next.id);
+          void chatRef.current?.loadSession(next.id);
+        } else {
+          void chatRef.current?.newSession();
+        }
+      }
+      void fetchSessions();
+    },
+    [activeSessionId, sessions, fetchSessions],
+  );
+
+  const handleRenameSession = useCallback(
+    async (sessionId: string, newTitle: string) => {
+      await fetch(`/api/web-sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      void fetchSessions();
+    },
+    [fetchSessions],
+  );
 
   // Poll for active (streaming) agent runs so the sidebar can show indicators.
   useEffect(() => {
@@ -357,6 +609,18 @@ function WorkspacePageInner() {
     return () => clearInterval(id);
   }, [fetchCronJobs]);
 
+  // After profile switch or workspace creation, reconnect SSE + refresh all data
+  const handleProfileSwitch = useCallback(() => {
+    reconnectWorkspace();
+    void fetchSessions();
+    void fetchCronJobs();
+    setActivePath(null);
+    setContent({ kind: "none" });
+    setActiveSessionId(null);
+    setSubagents([]);
+    setActiveSubagentKey(null);
+  }, [reconnectWorkspace, fetchSessions, fetchCronJobs]);
+
   // Load content when path changes
   const loadContent = useCallback(
     async (node: TreeNode) => {
@@ -396,6 +660,20 @@ function WorkspacePageInner() {
         } else if (node.type === "report") {
           setContent({ kind: "report", reportPath: node.path, filename: node.name });
         } else if (node.type === "file") {
+          // Spreadsheet files get their own binary viewer
+          if (isSpreadsheetFile(node.name)) {
+            const url = rawFileUrl(node.path);
+            setContent({ kind: "spreadsheet", url, filename: node.name });
+            return;
+          }
+
+          // HTML files get an iframe preview
+          const ext = node.name.split(".").pop()?.toLowerCase() ?? "";
+          if (ext === "html" || ext === "htm") {
+            setContent({ kind: "html", rawUrl: rawFileUrl(node.path), contentUrl: fileApiUrl(node.path), filename: node.name });
+            return;
+          }
+
           // Check if this is a media file (image/video/audio/pdf)
           const mediaType = detectMediaType(node.name);
           if (mediaType) {
@@ -446,8 +724,8 @@ function WorkspacePageInner() {
             setContent({ kind: "cron-dashboard" });
             return;
           }
-          // Clicking the web-chat directory → switch to workspace mode & open chats
-          if (node.path === openclawDir + "/web-chat") {
+          // Clicking any web-chat directory → switch to workspace mode & open chats
+          if (openclawDir && node.path.startsWith(openclawDir + "/web-chat")) {
             setBrowseDir(null);
             setActivePath(null);
             setContent({ kind: "none" });
@@ -507,6 +785,169 @@ function WorkspacePageInner() {
       void loadContent(node);
     },
     [loadContent, router, cronJobs, browseDir, workspaceRoot, openclawDir, setBrowseDir],
+  );
+
+  const loadSidebarPreviewFromNode = useCallback(
+    async (node: TreeNode): Promise<SidebarPreviewContent | null> => {
+      if (node.type === "folder") {
+        return { kind: "directory", path: node.path, name: node.name };
+      }
+      if (node.type === "database") {
+        return { kind: "database", dbPath: node.path, filename: node.name };
+      }
+
+      const mediaType = detectMediaType(node.name);
+      if (mediaType) {
+        return {
+          kind: "media",
+          url: rawFileUrl(node.path),
+          mediaType,
+          filename: node.name,
+          filePath: node.path,
+        };
+      }
+
+      const res = await fetch(fileApiUrl(node.path));
+      if (!res.ok) {return null;}
+      const data: FileData = await res.json();
+
+      if (node.type === "document" || data.type === "markdown") {
+        return {
+          kind: "document",
+          data,
+          title: node.name.replace(/\.mdx?$/, ""),
+        };
+      }
+      if (isCodeFile(node.name)) {
+        return { kind: "code", data, filename: node.name };
+      }
+      return { kind: "file", data, filename: node.name };
+    },
+    [],
+  );
+
+  // Open inline file-path mentions from chat.
+  // In chat mode, render a Dropbox-style preview in the right sidebar.
+  const handleFilePathClickFromChat = useCallback(
+    async (rawPath: string) => {
+      const inputPath = normalizeChatPath(rawPath);
+      if (!inputPath) {return false;}
+
+      // Desktop behavior: always use right-sidebar preview for chat path clicks.
+      const shouldPreviewInSidebar = !isMobile;
+
+      const openNode = async (node: TreeNode) => {
+        if (!shouldPreviewInSidebar) {
+          handleNodeSelect(node);
+          setShowChatSidebar(true);
+          return true;
+        }
+
+        // Ensure we are in main-chat layout so the preview panel is visible.
+        if (activePath || content.kind !== "none") {
+          setActivePath(null);
+          setContent({ kind: "none" });
+          router.replace("/workspace", { scroll: false });
+        }
+
+        setChatSidebarPreview({
+          status: "loading",
+          path: node.path,
+          filename: node.name,
+        });
+        const previewContent = await loadSidebarPreviewFromNode(node);
+        if (!previewContent) {
+          setChatSidebarPreview({
+            status: "error",
+            path: node.path,
+            filename: node.name,
+            message: "Could not preview this file.",
+          });
+          return false;
+        }
+        setChatSidebarPreview({
+          status: "ready",
+          path: node.path,
+          filename: node.name,
+          content: previewContent,
+        });
+        return true;
+      };
+
+      // For workspace-relative paths, prefer the live tree so we preserve semantics.
+      if (
+        !isAbsolutePath(inputPath) &&
+        !isHomeRelativePath(inputPath) &&
+        !inputPath.startsWith("./") &&
+        !inputPath.startsWith("../")
+      ) {
+        const node = resolveNode(tree, inputPath);
+        if (node) {
+          return await openNode(node);
+        }
+      }
+
+      try {
+        const res = await fetch(`/api/workspace/path-info?path=${encodeURIComponent(inputPath)}`);
+        if (!res.ok) {return false;}
+        const info = await res.json() as {
+          path?: string;
+          name?: string;
+          type?: "file" | "directory" | "other";
+        };
+        if (!info.path || !info.name || !info.type) {return false;}
+
+        // If this absolute path is inside the current workspace, map it
+        // back to a workspace-relative node first.
+        if (workspaceRoot && (info.path === workspaceRoot || info.path.startsWith(`${workspaceRoot}/`))) {
+          const relPath = info.path === workspaceRoot ? "" : info.path.slice(workspaceRoot.length + 1);
+          if (relPath) {
+            const node = resolveNode(tree, relPath);
+            if (node) {
+              return await openNode(node);
+            }
+          }
+        }
+
+        if (info.type === "directory") {
+          const dirNode: TreeNode = { name: info.name, path: info.path, type: "folder" };
+          if (shouldPreviewInSidebar) {
+            return await openNode(dirNode);
+          }
+          setBrowseDir(info.path);
+          setActivePath(info.path);
+          setContent({
+            kind: "directory",
+            node: { name: info.name, path: info.path, type: "folder" },
+          });
+          setShowChatSidebar(true);
+          return true;
+        }
+
+        if (info.type === "file") {
+          const fileNode: TreeNode = {
+            name: info.name,
+            path: info.path,
+            type: inferNodeTypeFromFileName(info.name),
+          };
+          if (shouldPreviewInSidebar) {
+            return await openNode(fileNode);
+          }
+          const parentDir = info.path.split("/").slice(0, -1).join("/") || "/";
+          if (isAbsolutePath(info.path)) {
+            setBrowseDir(parentDir);
+          }
+          await loadContent(fileNode);
+          setShowChatSidebar(true);
+          return true;
+        }
+      } catch {
+        // Ignore -- chat message bubble shows inline error state.
+      }
+
+      return false;
+    },
+    [activePath, content.kind, isMobile, tree, handleNodeSelect, workspaceRoot, loadSidebarPreviewFromNode, setBrowseDir, loadContent, router],
   );
 
   // Build the enhanced tree: real tree + Cron virtual folder at the bottom
@@ -623,12 +1064,12 @@ function WorkspacePageInner() {
         params.set("path", activePath);
         const entry = current.get("entry");
         if (entry) {params.set("entry", entry);}
-        router.replace(`/workspace?${params.toString()}`, { scroll: false });
+        router.push(`/workspace?${params.toString()}`, { scroll: false });
       }
     } else if (activeSessionId) {
       // Chat mode — no file selected.
       if (current.get("chat") !== activeSessionId || current.has("path")) {
-        router.replace(`/workspace?chat=${encodeURIComponent(activeSessionId)}`, { scroll: false });
+        router.push(`/workspace?chat=${encodeURIComponent(activeSessionId)}`, { scroll: false });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excludes searchParams to avoid infinite loop
@@ -640,7 +1081,7 @@ function WorkspacePageInner() {
       setEntryModal({ objectName, entryId });
       const params = new URLSearchParams(searchParams.toString());
       params.set("entry", `${objectName}:${entryId}`);
-      router.replace(`/workspace?${params.toString()}`, { scroll: false });
+      router.push(`/workspace?${params.toString()}`, { scroll: false });
     },
     [searchParams, router],
   );
@@ -859,8 +1300,13 @@ function WorkspacePageInner() {
 
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-    <div className="flex h-screen" style={{ background: "var(--color-bg)" }} onClick={handleContainerClick}>
-      {/* Sidebar — static on desktop, drawer overlay on mobile */}
+    <div
+      ref={layoutRef}
+      className="flex h-screen"
+      style={{ background: "var(--color-main-bg)" }}
+      onClick={handleContainerClick}
+    >
+      {/* Left sidebar — static on desktop (resizable), drawer overlay on mobile */}
       {isMobile ? (
         sidebarOpen && (
           <WorkspaceSidebar
@@ -878,31 +1324,75 @@ function WorkspacePageInner() {
             workspaceRoot={workspaceRoot}
             onGoToChat={() => { handleGoToChat(); setSidebarOpen(false); }}
             onExternalDrop={handleSidebarExternalDrop}
+            activeProfile={activeProfile}
+            onProfileSwitch={handleProfileSwitch}
+            showHidden={showHidden}
+            onToggleHidden={() => setShowHidden((v) => !v)}
             mobile
             onClose={() => setSidebarOpen(false)}
           />
         )
       ) : (
-        <WorkspaceSidebar
-          tree={enhancedTree}
-          activePath={activePath}
-          onSelect={handleNodeSelect}
-          onRefresh={refreshTree}
-          orgName={context?.organization?.name}
-          loading={treeLoading}
-          browseDir={browseDir}
-          parentDir={effectiveParentDir}
-          onNavigateUp={handleNavigateUp}
-          onGoHome={handleGoHome}
-          onFileSearchSelect={handleFileSearchSelect}
-          workspaceRoot={workspaceRoot}
-          onGoToChat={handleGoToChat}
-          onExternalDrop={handleSidebarExternalDrop}
-        />
+        <>
+          {!leftSidebarCollapsed && (
+          <div
+            className="flex shrink-0 flex-col relative"
+            style={{ width: leftSidebarWidth, minWidth: leftSidebarWidth }}
+          >
+            <ResizeHandle
+              mode="left"
+              containerRef={layoutRef}
+              min={LEFT_SIDEBAR_MIN}
+              max={LEFT_SIDEBAR_MAX}
+              onResize={setLeftSidebarWidth}
+            />
+            <WorkspaceSidebar
+              tree={enhancedTree}
+              activePath={activePath}
+              onSelect={handleNodeSelect}
+              onRefresh={refreshTree}
+              orgName={context?.organization?.name}
+              loading={treeLoading}
+              browseDir={browseDir}
+              parentDir={effectiveParentDir}
+              onNavigateUp={handleNavigateUp}
+              onGoHome={handleGoHome}
+              onFileSearchSelect={handleFileSearchSelect}
+              workspaceRoot={workspaceRoot}
+              onGoToChat={handleGoToChat}
+              onExternalDrop={handleSidebarExternalDrop}
+              activeProfile={activeProfile}
+              onProfileSwitch={handleProfileSwitch}
+              showHidden={showHidden}
+              onToggleHidden={() => setShowHidden((v) => !v)}
+              width={leftSidebarWidth}
+              onCollapse={() => setLeftSidebarCollapsed(true)}
+            />
+          </div>
+          )}
+        </>
+      )}
+
+      {/* Expand left sidebar button (shown when collapsed) */}
+      {!isMobile && leftSidebarCollapsed && (
+        <div className="shrink-0 flex flex-col items-center pt-2.5 px-1.5">
+          <button
+            type="button"
+            onClick={() => setLeftSidebarCollapsed(false)}
+            className="p-1.5 rounded-md transition-colors hover:bg-black/5"
+            style={{ color: "var(--color-text-muted)" }}
+            title="Show sidebar (⌘B)"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+            </svg>
+          </button>
+        </div>
       )}
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ background: "var(--color-main-bg)" }}>
         {/* Mobile top bar — always visible on mobile */}
         {isMobile && (
           <div
@@ -1011,17 +1501,32 @@ function WorkspacePageInner() {
           {showMainChat ? (
             /* Main chat view (default when no file is selected) */
             <>
-              <div className="flex-1 flex flex-col min-w-0">
+              <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--color-main-bg)" }}>
+                {activeSubagent ? (
+                  <SubagentPanel
+                    sessionKey={activeSubagent.childSessionKey}
+                    task={activeSubagent.task}
+                    label={activeSubagent.label}
+                    onBack={handleBackFromSubagent}
+                  />
+                ) : (
                 <ChatPanel
                   ref={chatRef}
                   sessionTitle={activeSessionTitle}
                   initialSessionId={activeSessionId ?? undefined}
                   onActiveSessionChange={(id) => {
                     setActiveSessionId(id);
+                    setActiveSubagentKey(null);
                   }}
                   onSessionsChange={refreshSessions}
+                  onSubagentSpawned={handleSubagentSpawned}
+                  onSubagentClick={handleSubagentClickFromChat}
+                  onFilePathClick={handleFilePathClickFromChat}
+                  onDeleteSession={handleDeleteSession}
+                  onRenameSession={handleRenameSession}
                   compact={isMobile}
                 />
+                )}
               </div>
               {/* Chat sessions sidebar — static on desktop, drawer overlay on mobile */}
               {isMobile ? (
@@ -1031,36 +1536,93 @@ function WorkspacePageInner() {
                     activeSessionId={activeSessionId}
                     activeSessionTitle={activeSessionTitle}
                     streamingSessionIds={streamingSessionIds}
+                    subagents={subagents}
+                    activeSubagentKey={activeSubagentKey}
+                    loading={sessionsLoading}
                     onSelectSession={(sessionId) => {
                       setActiveSessionId(sessionId);
+                      setActiveSubagentKey(null);
                       void chatRef.current?.loadSession(sessionId);
                     }}
                     onNewSession={() => {
                       setActiveSessionId(null);
+                      setActiveSubagentKey(null);
                       void chatRef.current?.newSession();
                       router.replace("/workspace", { scroll: false });
                       setChatSessionsOpen(false);
                     }}
+                    onSelectSubagent={handleSelectSubagent}
+                    onDeleteSession={handleDeleteSession}
+                    onRenameSession={handleRenameSession}
                     mobile
                     onClose={() => setChatSessionsOpen(false)}
                   />
                 )
               ) : (
-                <ChatSessionsSidebar
-                  sessions={sessions}
-                  activeSessionId={activeSessionId}
-                  activeSessionTitle={activeSessionTitle}
-                  streamingSessionIds={streamingSessionIds}
-                  onSelectSession={(sessionId) => {
-                    setActiveSessionId(sessionId);
-                    void chatRef.current?.loadSession(sessionId);
-                  }}
-                  onNewSession={() => {
-                    setActiveSessionId(null);
-                    void chatRef.current?.newSession();
-                    router.replace("/workspace", { scroll: false });
-                  }}
-                />
+                <>
+                  {!rightSidebarCollapsed && (
+                  <div
+                    className="flex shrink-0 flex-col relative"
+                    style={{ width: rightSidebarWidth, minWidth: rightSidebarWidth, background: "var(--color-sidebar-bg)" }}
+                  >
+                    <ResizeHandle
+                      mode="right"
+                      containerRef={layoutRef}
+                      min={RIGHT_SIDEBAR_MIN}
+                      max={RIGHT_SIDEBAR_MAX}
+                      onResize={setRightSidebarWidth}
+                    />
+                    {chatSidebarPreview ? (
+                      <ChatSidebarPreview
+                        preview={chatSidebarPreview}
+                        onClose={() => setChatSidebarPreview(null)}
+                      />
+                    ) : (
+                      <ChatSessionsSidebar
+                        sessions={sessions}
+                        activeSessionId={activeSessionId}
+                        activeSessionTitle={activeSessionTitle}
+                        streamingSessionIds={streamingSessionIds}
+                        subagents={subagents}
+                        activeSubagentKey={activeSubagentKey}
+                        loading={sessionsLoading}
+                        onSelectSession={(sessionId) => {
+                          setActiveSessionId(sessionId);
+                          setActiveSubagentKey(null);
+                          void chatRef.current?.loadSession(sessionId);
+                        }}
+                        onNewSession={() => {
+                          setActiveSessionId(null);
+                          setActiveSubagentKey(null);
+                          void chatRef.current?.newSession();
+                          router.replace("/workspace", { scroll: false });
+                        }}
+                        onSelectSubagent={handleSelectSubagent}
+                        onDeleteSession={handleDeleteSession}
+                        onRenameSession={handleRenameSession}
+                        onCollapse={() => setRightSidebarCollapsed(true)}
+                        width={rightSidebarWidth}
+                      />
+                    )}
+                  </div>
+                  )}
+                  {rightSidebarCollapsed && (
+                    <div className="shrink-0 flex flex-col items-center pt-2.5 px-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setRightSidebarCollapsed(false)}
+                        className="p-1.5 rounded-md transition-colors hover:bg-black/5"
+                        style={{ color: "var(--color-text-muted)" }}
+                        title="Show chat sidebar (⌘⇧B)"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect width="18" height="18" x="3" y="3" rx="2" />
+                          <path d="M15 3v18" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </>
           ) : (
@@ -1084,26 +1646,37 @@ function WorkspacePageInner() {
                   searchFn={searchIndex}
                   onSelectCronJob={handleSelectCronJob}
                   onBackToCronDashboard={handleBackToCronDashboard}
+                  onWorkspaceCreated={handleProfileSwitch}
                 />
               </div>
 
               {/* Chat sidebar (file/folder-scoped) — hidden for reserved paths, hidden on mobile */}
-              {!isMobile && fileContext && showChatSidebar && (
-                <aside
-                  className="flex-shrink-0 border-l"
-                  style={{
-                    width: 380,
-                    borderColor: "var(--color-border)",
-                    background: "var(--color-bg)",
-                  }}
-                >
-                  <ChatPanel
-                    ref={compactChatRef}
-                    compact
-                    fileContext={fileContext}
-                    onFileChanged={handleFileChanged}
-                  />
-                </aside>
+              {!isMobile && fileContext && showChatSidebar && !rightSidebarCollapsed && (
+                <>
+                  <aside
+                    className="flex-shrink-0 border-l flex flex-col relative"
+                    style={{
+                      width: rightSidebarWidth,
+                      borderColor: "var(--color-border)",
+                      background: "var(--color-bg)",
+                    }}
+                  >
+                    <ResizeHandle
+                      mode="right"
+                      containerRef={layoutRef}
+                      min={RIGHT_SIDEBAR_MIN}
+                      max={RIGHT_SIDEBAR_MAX}
+                      onResize={setRightSidebarWidth}
+                    />
+                    <ChatPanel
+                      ref={compactChatRef}
+                      compact
+                      fileContext={fileContext}
+                      onFileChanged={handleFileChanged}
+                      onFilePathClick={handleFilePathClickFromChat}
+                    />
+                  </aside>
+                </>
               )}
             </>
           )}
@@ -1129,6 +1702,309 @@ function WorkspacePageInner() {
   );
 }
 
+function previewFileTypeBadge(filename: string): { label: string; color: string } {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "pdf") {return { label: "PDF", color: "#ef4444" };}
+  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "heic", "avif"].includes(ext)) {return { label: "Image", color: "#3b82f6" };}
+  if (["mp4", "webm", "mov", "avi", "mkv"].includes(ext)) {return { label: "Video", color: "#8b5cf6" };}
+  if (["mp3", "wav", "ogg", "m4a", "aac", "flac"].includes(ext)) {return { label: "Audio", color: "#f59e0b" };}
+  if (["md", "mdx"].includes(ext)) {return { label: "Markdown", color: "#10b981" };}
+  if (["ts", "tsx", "js", "jsx", "py", "go", "rs", "java", "rb", "swift", "kt", "c", "cpp", "h"].includes(ext)) {return { label: ext.toUpperCase(), color: "#3b82f6" };}
+  if (["json", "yaml", "yml", "toml", "xml", "csv"].includes(ext)) {return { label: ext.toUpperCase(), color: "#6b7280" };}
+  if (["duckdb", "sqlite", "sqlite3", "db"].includes(ext)) {return { label: "Database", color: "#6366f1" };}
+  return { label: ext.toUpperCase() || "File", color: "#6b7280" };
+}
+
+function shortenPreviewPath(p: string): string {
+  return p.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
+}
+
+function ChatSidebarPreview({
+  preview,
+  onClose,
+}: {
+  preview: ChatSidebarPreviewState;
+  onClose: () => void;
+}) {
+  const badge = previewFileTypeBadge(preview.filename);
+
+  const openInFinder = useCallback(async () => {
+    try {
+      await fetch("/api/workspace/open-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: preview.path, reveal: true }),
+      });
+    } catch { /* ignore */ }
+  }, [preview.path]);
+
+  const openWithSystem = useCallback(async () => {
+    try {
+      await fetch("/api/workspace/open-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: preview.path }),
+      });
+    } catch { /* ignore */ }
+  }, [preview.path]);
+
+  const downloadUrl = preview.status === "ready" && preview.content.kind === "media"
+    ? preview.content.url
+    : null;
+
+  let body: React.ReactNode;
+
+  if (preview.status === "loading") {
+    body = (
+      <div className="flex flex-col h-full items-center justify-center gap-3">
+        <UnicodeSpinner
+          name="braille"
+          className="text-2xl"
+          style={{ color: "var(--color-text-muted)" }}
+        />
+        <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+          Loading preview...
+        </p>
+      </div>
+    );
+  } else if (preview.status === "error") {
+    body = (
+      <div className="flex flex-col h-full items-center justify-center gap-4 px-6">
+        <div
+          className="w-14 h-14 rounded-2xl flex items-center justify-center"
+          style={{ background: "color-mix(in srgb, var(--color-error) 10%, transparent)" }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="15" x2="9" y1="9" y2="15" />
+            <line x1="9" x2="15" y1="9" y2="15" />
+          </svg>
+        </div>
+        <div className="text-center">
+          <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+            Preview unavailable
+          </p>
+          <p className="text-xs mt-1" style={{ color: "var(--color-text-muted)" }}>
+            {preview.message}
+          </p>
+        </div>
+      </div>
+    );
+  } else {
+    const c = preview.content;
+    switch (c.kind) {
+      case "media":
+        if (c.mediaType === "pdf") {
+          // Hide the browser's built-in PDF toolbar for a cleaner look
+          const pdfUrl = c.url + (c.url.includes("#") ? "&" : "#") + "toolbar=0&navpanes=0&scrollbar=1";
+          body = (
+            <iframe
+              src={pdfUrl}
+              className="w-full h-full"
+              style={{ border: "none", colorScheme: "light" }}
+              title={`Preview: ${c.filename}`}
+            />
+          );
+        } else if (c.mediaType === "image") {
+          body = (
+            <div className="flex items-center justify-center h-full p-4 overflow-auto" style={{ background: "var(--color-bg)" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={c.url}
+                alt={c.filename}
+                className="max-w-full max-h-full object-contain rounded-lg"
+                style={{ boxShadow: "0 2px 16px rgba(0,0,0,0.08)" }}
+                draggable={false}
+              />
+            </div>
+          );
+        } else if (c.mediaType === "video") {
+          body = (
+            <div className="flex items-center justify-center h-full p-4" style={{ background: "#000" }}>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <video src={c.url} controls className="max-w-full max-h-full rounded-lg" />
+            </div>
+          );
+        } else if (c.mediaType === "audio") {
+          body = (
+            <div className="flex flex-col items-center justify-center h-full gap-6 px-6">
+              <div
+                className="w-20 h-20 rounded-2xl flex items-center justify-center"
+                style={{ background: "linear-gradient(135deg, #f59e0b20, #f59e0b08)" }}
+              >
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+                </svg>
+              </div>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <audio src={c.url} controls className="w-full" />
+            </div>
+          );
+        }
+        break;
+      case "document":
+        body = (
+          <div className="p-5 overflow-auto h-full">
+            <div className="workspace-prose text-sm">
+              <DocumentView
+                content={c.data.content}
+                title={c.title}
+              />
+            </div>
+          </div>
+        );
+        break;
+      case "code":
+        body = (
+          <div className="overflow-auto h-full">
+            <CodeViewer content={c.data.content} filename={c.filename} />
+          </div>
+        );
+        break;
+      case "file":
+        body = (
+          <div className="overflow-auto h-full">
+            <FileViewer content={c.data.content} filename={c.filename} type={c.data.type === "yaml" ? "yaml" : "text"} />
+          </div>
+        );
+        break;
+      case "database":
+        body = (
+          <div className="overflow-auto h-full">
+            <DatabaseViewer dbPath={c.dbPath} filename={c.filename} />
+          </div>
+        );
+        break;
+      case "directory":
+        body = (
+          <div className="flex flex-col items-center justify-center h-full gap-4 px-6">
+            <div
+              className="w-14 h-14 rounded-2xl flex items-center justify-center"
+              style={{ background: "color-mix(in srgb, var(--color-accent) 10%, transparent)" }}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+              {c.name}
+            </p>
+          </div>
+        );
+        break;
+      default:
+        body = null;
+    }
+  }
+
+  return (
+    <aside
+      className="h-full border-l flex flex-col"
+      style={{
+        borderColor: "var(--color-border)",
+        background: "var(--color-bg)",
+      }}
+    >
+      {/* Header: close + filename + badge + actions */}
+      <div
+        className="px-3 py-2.5 flex items-center gap-2 flex-shrink-0"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1 rounded-md transition-colors flex-shrink-0"
+          style={{ color: "var(--color-text-muted)" }}
+          title="Close preview"
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+          </svg>
+        </button>
+
+        <span className="text-[13px] font-medium truncate min-w-0" style={{ color: "var(--color-text)" }}>
+          {preview.filename}
+        </span>
+
+        <span
+          className="text-[10px] font-medium px-1.5 py-[1px] rounded flex-shrink-0"
+          style={{
+            background: `${badge.color}14`,
+            color: badge.color,
+          }}
+        >
+          {badge.label}
+        </span>
+
+        <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
+          <button
+            type="button"
+            onClick={openWithSystem}
+            className="p-1.5 rounded-md transition-colors"
+            style={{ color: "var(--color-text-muted)" }}
+            title="Open with default app"
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            </svg>
+          </button>
+          {downloadUrl && (
+            <a
+              href={downloadUrl}
+              download={preview.filename}
+              className="p-1.5 rounded-md transition-colors"
+              style={{ color: "var(--color-text-muted)" }}
+              title="Download"
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" />
+              </svg>
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={openInFinder}
+            className="p-1.5 rounded-md transition-colors"
+            style={{ color: "var(--color-text-muted)" }}
+            title="Reveal in Finder"
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Preview body */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {body}
+      </div>
+
+      {/* Footer path */}
+      <div
+        className="px-3 py-1.5 border-t flex-shrink-0"
+        style={{ borderColor: "var(--color-border)" }}
+      >
+        <p
+          className="text-[10px] truncate"
+          style={{ color: "var(--color-text-muted)", fontFamily: "'SF Mono', 'Fira Code', monospace" }}
+          title={preview.path}
+        >
+          {shortenPreviewPath(preview.path)}
+        </p>
+      </div>
+    </aside>
+  );
+}
+
 // --- Content Renderer ---
 
 function ContentRenderer({
@@ -1148,6 +2024,7 @@ function ContentRenderer({
   searchFn,
   onSelectCronJob,
   onBackToCronDashboard,
+  onWorkspaceCreated,
 }: {
   content: ContentState;
   workspaceExists: boolean;
@@ -1167,18 +2044,14 @@ function ContentRenderer({
   searchFn: (query: string, limit?: number) => import("@/lib/search-index").SearchIndexItem[];
   onSelectCronJob: (jobId: string) => void;
   onBackToCronDashboard: () => void;
+  /** Called after a new workspace is created from the empty state. */
+  onWorkspaceCreated?: () => void;
 }) {
   switch (content.kind) {
     case "loading":
       return (
         <div className="flex items-center justify-center h-full">
-          <div
-            className="w-6 h-6 border-2 rounded-full animate-spin"
-            style={{
-              borderColor: "var(--color-border)",
-              borderTopColor: "var(--color-accent)",
-            }}
-          />
+          <UnicodeSpinner name="braille" className="text-2xl" style={{ color: "var(--color-text-muted)" }} />
         </div>
       );
 
@@ -1233,6 +2106,24 @@ function ContentRenderer({
         />
       );
 
+    case "spreadsheet":
+      return (
+        <FileViewer
+          filename={content.filename}
+          type="spreadsheet"
+          url={content.url}
+        />
+      );
+
+    case "html":
+      return (
+        <HtmlViewer
+          rawUrl={content.rawUrl}
+          contentUrl={content.contentUrl}
+          filename={content.filename}
+        />
+      );
+
     case "database":
       return (
         <DatabaseViewer
@@ -1256,13 +2147,7 @@ function ContentRenderer({
       if (isBrowseLive && treeLoading) {
         return (
           <div className="flex items-center justify-center h-full">
-            <div
-              className="w-6 h-6 border-2 rounded-full animate-spin"
-              style={{
-                borderColor: "var(--color-border)",
-                borderTopColor: "var(--color-accent)",
-              }}
-            />
+            <UnicodeSpinner name="braille" className="text-2xl" style={{ color: "var(--color-text-muted)" }} />
           </div>
         );
       }
@@ -1298,7 +2183,7 @@ function ContentRenderer({
     case "none":
     default:
       if (tree.length === 0) {
-        return <EmptyState workspaceExists={workspaceExists} />;
+        return <EmptyState workspaceExists={workspaceExists} onWorkspaceCreated={onWorkspaceCreated} />;
       }
       return <WelcomeView tree={tree} onNodeSelect={onNodeSelect} />;
   }
@@ -1326,6 +2211,15 @@ function ObjectView({
   const [savedViews, setSavedViews] = useState<SavedView[]>(data.savedViews ?? []);
   const [activeViewName, setActiveViewName] = useState<string | undefined>(data.activeView);
 
+  // --- Server-side pagination state ---
+  const [serverPage, setServerPage] = useState(data.page ?? 1);
+  const [serverPageSize, setServerPageSize] = useState(data.pageSize ?? 100);
+  const [totalCount, setTotalCount] = useState(data.totalCount ?? data.entries.length);
+  const [entries, setEntries] = useState(data.entries);
+  const [serverSearch, setServerSearch] = useState("");
+  const [sortRules, setSortRules] = useState<SortRule[] | undefined>(undefined);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Column visibility: maps field IDs to boolean (false = hidden)
   const [viewColumns, setViewColumns] = useState<string[] | undefined>(undefined);
 
@@ -1339,6 +2233,54 @@ function ObjectView({
     return vis;
   }, [viewColumns, data.fields]);
 
+  // Fetch entries from server with current pagination/filter/sort/search state
+  const fetchEntries = useCallback(async (opts?: {
+    page?: number;
+    pageSize?: number;
+    filters?: FilterGroup;
+    sort?: SortRule[];
+    search?: string;
+  }) => {
+    const p = opts?.page ?? serverPage;
+    const ps = opts?.pageSize ?? serverPageSize;
+    const f = opts?.filters ?? filters;
+    const s = opts?.sort ?? sortRules;
+    const q = opts?.search ?? serverSearch;
+
+    const params = new URLSearchParams();
+    params.set("page", String(p));
+    params.set("pageSize", String(ps));
+    if (f && f.rules.length > 0) {
+      params.set("filters", serializeFilters(f));
+    }
+    if (s && s.length > 0) {
+      params.set("sort", JSON.stringify(s));
+    }
+    if (q) {
+      params.set("search", q);
+    }
+
+    try {
+      const res = await fetch(
+        `/api/workspace/objects/${encodeURIComponent(data.object.name)}?${params.toString()}`
+      );
+      if (!res.ok) {return;}
+      const result: ObjectData = await res.json();
+      setEntries(result.entries);
+      setTotalCount(result.totalCount ?? result.entries.length);
+      setServerPage(result.page ?? p);
+      setServerPageSize(result.pageSize ?? ps);
+    } catch {
+      // ignore
+    }
+  }, [serverPage, serverPageSize, filters, sortRules, serverSearch, data.object.name]);
+
+  // Sync initial data from props (when parent refreshes via SSE)
+  useEffect(() => {
+    setEntries(data.entries);
+    setTotalCount(data.totalCount ?? data.entries.length);
+  }, [data.entries, data.totalCount]);
+
   // Sync saved views when data changes (e.g. SSE refresh from AI editing .object.yaml)
   useEffect(() => {
     setSavedViews(data.savedViews ?? []);
@@ -1348,17 +2290,51 @@ function ObjectView({
         setFilters(view.filters ?? emptyFilterGroup());
         setViewColumns(view.columns);
         setActiveViewName(view.name);
+        // Re-fetch with new filters from the view
+        void fetchEntries({ page: 1, filters: view.filters ?? emptyFilterGroup() });
       }
     }
-  // Only re-run when the API data itself changes (not our local state)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.savedViews, data.activeView]);
 
-  // Apply client-side filtering
-  const filteredEntries = useMemo(
-    () => matchesFilter(data.entries, filters),
-    [data.entries, filters],
-  );
+  // When filters change, reset to page 1 and re-fetch
+  const handleFiltersChange = useCallback((newFilters: FilterGroup) => {
+    setFilters(newFilters);
+    setServerPage(1);
+    void fetchEntries({ page: 1, filters: newFilters });
+  }, [fetchEntries]);
+
+  // Server-side search with debounce
+  const handleServerSearch = useCallback((query: string) => {
+    setServerSearch(query);
+    if (searchTimerRef.current) {clearTimeout(searchTimerRef.current);}
+    searchTimerRef.current = setTimeout(() => {
+      setServerPage(1);
+      void fetchEntries({ page: 1, search: query });
+    }, 300);
+  }, [fetchEntries]);
+
+  // Page change
+  const handlePageChange = useCallback((page: number) => {
+    setServerPage(page);
+    void fetchEntries({ page });
+  }, [fetchEntries]);
+
+  // Page size change
+  const handlePageSizeChange = useCallback((size: number) => {
+    setServerPageSize(size);
+    setServerPage(1);
+    void fetchEntries({ page: 1, pageSize: size });
+  }, [fetchEntries]);
+
+  // Override onRefreshObject to re-fetch with current pagination state
+  const handleRefresh = useCallback(() => {
+    void fetchEntries();
+    onRefreshObject();
+  }, [fetchEntries, onRefreshObject]);
+
+  // Use entries from server (already filtered server-side)
+  const filteredEntries = entries;
 
   // Save view to .object.yaml via API
   const handleSaveView = useCallback(async (name: string) => {
@@ -1381,10 +2357,13 @@ function ObjectView({
   }, [filters, savedViews, data.object.name]);
 
   const handleLoadView = useCallback((view: SavedView) => {
-    setFilters(view.filters ?? emptyFilterGroup());
+    const newFilters = view.filters ?? emptyFilterGroup();
+    setFilters(newFilters);
     setViewColumns(view.columns);
     setActiveViewName(view.name);
-  }, []);
+    setServerPage(1);
+    void fetchEntries({ page: 1, filters: newFilters });
+  }, [fetchEntries]);
 
   const handleDeleteView = useCallback(async (name: string) => {
     const updated = savedViews.filter((v) => v.name !== name);
@@ -1491,7 +2470,7 @@ function ObjectView({
               border: "1px solid var(--color-border)",
             }}
           >
-            {filteredEntries.length}{filters.rules.length > 0 ? `/${data.entries.length}` : ""} entries
+            {totalCount} entries
           </span>
           <span
             className="text-xs px-2 py-1 rounded-full"
@@ -1583,7 +2562,7 @@ function ObjectView({
         <ObjectFilterBar
           fields={data.fields}
           filters={filters}
-          onFiltersChange={setFilters}
+          onFiltersChange={handleFiltersChange}
           savedViews={savedViews}
           activeViewName={activeViewName}
           onSaveView={handleSaveView}
@@ -1604,7 +2583,7 @@ function ObjectView({
           members={members}
           relationLabels={data.relationLabels}
           onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
-          onRefresh={onRefreshObject}
+          onRefresh={handleRefresh}
         />
       ) : (
         <ObjectTable
@@ -1616,8 +2595,16 @@ function ObjectView({
           reverseRelations={data.reverseRelations}
           onNavigateToObject={onNavigateToObject}
           onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
-          onRefresh={onRefreshObject}
+          onRefresh={handleRefresh}
           columnVisibility={columnVisibility}
+          serverPagination={{
+            totalCount,
+            page: serverPage,
+            pageSize: serverPageSize,
+            onPageChange: handlePageChange,
+            onPageSizeChange: handlePageSizeChange,
+          }}
+          onServerSearch={handleServerSearch}
         />
       )}
     </div>

@@ -73,6 +73,7 @@ export const AgentParamsSchema = Type.Object(
     timeout: Type.Optional(Type.Integer({ minimum: 0 })),
     lane: Type.Optional(Type.String()),
     extraSystemPrompt: Type.Optional(Type.String()),
+    workspace: Type.Optional(Type.String()),
     inputProvenance: Type.Optional(
       Type.Object(
         {
@@ -121,6 +122,21 @@ export const WakeParamsSchema = Type.Object(
   {
     mode: Type.Union([Type.Literal("now"), Type.Literal("next-heartbeat")]),
     text: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+export const AgentSubscribeParamsSchema = Type.Object(
+  {
+    sessionKey: NonEmptyString,
+    afterSeq: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentUnsubscribeParamsSchema = Type.Object(
+  {
+    sessionKey: NonEmptyString,
   },
   { additionalProperties: false },
 );
