@@ -369,6 +369,7 @@ export function CreateWorkspaceDialog({ isOpen, onClose, onCreated }: CreateWork
         open={showDirPicker}
         onClose={() => setShowDirPicker(false)}
         onSelect={(path) => setCustomPath(path)}
+        startDir="~"
       />
     </div>
   );

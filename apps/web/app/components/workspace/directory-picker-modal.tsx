@@ -151,11 +151,16 @@ export function DirectoryPickerModal({
     if (!newFolderName.trim() || !displayDir) {return;}
     const folderPath = `${displayDir}/${newFolderName.trim()}`;
     try {
-      await fetch("/api/workspace/mkdir", {
+      const res = await fetch("/api/workspace/mkdir", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: folderPath }),
+        body: JSON.stringify({ path: folderPath, absolute: true }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError((data as { error?: string }).error || "Failed to create folder");
+        return;
+      }
       setCreatingFolder(false);
       setNewFolderName("");
       void fetchDir(currentDir);

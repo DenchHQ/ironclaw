@@ -1,5 +1,6 @@
 import { readdirSync, statSync, type Dirent } from "node:fs";
 import { join, dirname, resolve } from "node:path";
+import { homedir } from "node:os";
 import { resolveWorkspaceRoot } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -114,6 +115,10 @@ export async function GET(req: Request) {
 		return Response.json(
 			{ entries: [], currentDir: "/", parentDir: null },
 		);
+	}
+
+	if (dir.startsWith("~")) {
+		dir = join(homedir(), dir.slice(1));
 	}
 
 	const resolved = resolve(dir);

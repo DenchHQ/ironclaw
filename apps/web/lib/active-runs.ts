@@ -803,6 +803,12 @@ function wireChildProcess(run: ActiveRun): void {
 			return;
 		}
 
+		// Skip events from other sessions (e.g. subagent broadcasts that
+		// the gateway delivers on the same WS connection).
+		if (ev.sessionKey && ev.sessionKey !== parentSessionKey) {
+			return;
+		}
+
 		// Track the global event cursor from the gateway for replay on handoff.
 		const gSeq = typeof (ev as Record<string, unknown>).globalSeq === "number"
 			? (ev as Record<string, unknown>).globalSeq as number

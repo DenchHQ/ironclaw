@@ -248,6 +248,7 @@ export async function POST(req: Request) {
     if (workspaceDir.startsWith("~")) {
       workspaceDir = join(homedir(), workspaceDir.slice(1));
     }
+    workspaceDir = resolve(workspaceDir);
   } else {
     const stateDir = resolveOpenClawStateDir();
     if (profileName && profileName !== "default") {
