@@ -358,6 +358,7 @@ function WorkspacePageInner() {
     reconnect: reconnectWorkspace,
     browseDir, setBrowseDir, parentDir: browseParentDir, workspaceRoot, openclawDir,
     activeProfile,
+    showHidden, setShowHidden,
   } = useWorkspaceWatcher();
 
   // handleProfileSwitch is defined below fetchSessions/fetchCronJobs (avoids TDZ)
@@ -1325,6 +1326,8 @@ function WorkspacePageInner() {
             onExternalDrop={handleSidebarExternalDrop}
             activeProfile={activeProfile}
             onProfileSwitch={handleProfileSwitch}
+            showHidden={showHidden}
+            onToggleHidden={() => setShowHidden((v) => !v)}
             mobile
             onClose={() => setSidebarOpen(false)}
           />
@@ -1360,6 +1363,8 @@ function WorkspacePageInner() {
               onExternalDrop={handleSidebarExternalDrop}
               activeProfile={activeProfile}
               onProfileSwitch={handleProfileSwitch}
+              showHidden={showHidden}
+              onToggleHidden={() => setShowHidden((v) => !v)}
               width={leftSidebarWidth}
               onCollapse={() => setLeftSidebarCollapsed(true)}
             />
