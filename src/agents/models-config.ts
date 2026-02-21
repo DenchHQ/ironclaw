@@ -15,6 +15,15 @@ type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 
 const DEFAULT_MODE: NonNullable<ModelsConfig["mode"]> = "merge";
 
+/**
+ * In-flight promise for {@link ensureOpenClawModelsJson}.  Multiple concurrent
+ * callers (model catalog, agent context, image tools, embedded runner, …) all
+ * resolve/write the same `models.json` file.  Storing the pending promise here
+ * lets us deduplicate the work: the first caller does the I/O while subsequent
+ * callers piggy-back on the same result.
+ */
+let ensureModelsJsonPromise: Promise<{ agentDir: string; wrote: boolean }> | null = null;
+
 function mergeProviderModels(implicit: ProviderConfig, explicit: ProviderConfig): ProviderConfig {
   const implicitModels = Array.isArray(implicit.models) ? implicit.models : [];
   const explicitModels = Array.isArray(explicit.models) ? explicit.models : [];
@@ -79,6 +88,37 @@ async function readJson(pathname: string): Promise<unknown> {
 }
 
 export async function ensureOpenClawModelsJson(
+  config?: OpenClawConfig,
+  agentDirOverride?: string,
+): Promise<{ agentDir: string; wrote: boolean }> {
+  // Fast-path: if a write is already in-flight and the caller didn't provide
+  // custom overrides, reuse the pending promise to avoid duplicate disk I/O.
+  const hasOverrides = config !== undefined || (agentDirOverride?.trim() ?? "") !== "";
+  if (!hasOverrides && ensureModelsJsonPromise) {
+    return ensureModelsJsonPromise;
+  }
+
+  const promise = ensureOpenClawModelsJsonInner(config, agentDirOverride);
+
+  if (!hasOverrides) {
+    ensureModelsJsonPromise = promise;
+    // Clear once settled so future calls re-evaluate (config may have changed).
+    void promise.finally(() => {
+      if (ensureModelsJsonPromise === promise) {
+        ensureModelsJsonPromise = null;
+      }
+    });
+  }
+
+  return promise;
+}
+
+/** @internal visible for testing */
+export function resetEnsureModelsJsonCacheForTest(): void {
+  ensureModelsJsonPromise = null;
+}
+
+async function ensureOpenClawModelsJsonInner(
   config?: OpenClawConfig,
   agentDirOverride?: string,
 ): Promise<{ agentDir: string; wrote: boolean }> {
