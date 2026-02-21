@@ -121,15 +121,45 @@ function resolveConfigRedaction(): RedactOptions {
   };
 }
 
+/* ── Cached resolution ── */
+
+let _cachedConfig: RedactOptions | undefined;
+let _cachedCompiledPatterns: RegExp[] | undefined;
+let _cachedPatternSource: string[] | undefined;
+
+function getCachedConfig(): RedactOptions {
+  if (!_cachedConfig) {
+    _cachedConfig = resolveConfigRedaction();
+  }
+  return _cachedConfig;
+}
+
+function getCachedPatterns(source?: string[]): RegExp[] {
+  const key = source?.length ? source : DEFAULT_REDACT_PATTERNS;
+  if (_cachedCompiledPatterns && _cachedPatternSource === key) {
+    return _cachedCompiledPatterns;
+  }
+  _cachedPatternSource = key;
+  _cachedCompiledPatterns = resolvePatterns(key);
+  return _cachedCompiledPatterns;
+}
+
+/** Clear the cached config and patterns (useful for testing or config reload). */
+export function clearRedactCache(): void {
+  _cachedConfig = undefined;
+  _cachedCompiledPatterns = undefined;
+  _cachedPatternSource = undefined;
+}
+
 export function redactSensitiveText(text: string, options?: RedactOptions): string {
   if (!text) {
     return text;
   }
-  const resolved = options ?? resolveConfigRedaction();
+  const resolved = options ?? getCachedConfig();
   if (normalizeMode(resolved.mode) === "off") {
     return text;
   }
-  const patterns = resolvePatterns(resolved.patterns);
+  const patterns = getCachedPatterns(resolved.patterns);
   if (!patterns.length) {
     return text;
   }
@@ -137,7 +167,7 @@ export function redactSensitiveText(text: string, options?: RedactOptions): stri
 }
 
 export function redactToolDetail(detail: string): string {
-  const resolved = resolveConfigRedaction();
+  const resolved = getCachedConfig();
   if (normalizeMode(resolved.mode) !== "tools") {
     return detail;
   }
