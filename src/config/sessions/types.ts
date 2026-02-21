@@ -146,6 +146,8 @@ export type SessionSkillSnapshot = {
   skills: Array<{ name: string; primaryEnv?: string }>;
   resolvedSkills?: Skill[];
   version?: number;
+  /** Workspace dir this snapshot was built for (used to invalidate on profile switch). */
+  workspaceDir?: string;
 };
 
 export type SessionSystemPromptReport = {

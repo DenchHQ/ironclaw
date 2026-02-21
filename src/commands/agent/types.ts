@@ -76,6 +76,8 @@ export type AgentCommandOpts = {
   runId?: string;
   extraSystemPrompt?: string;
   inputProvenance?: InputProvenance;
+  /** Workspace directory override (passed via RPC from the web UI for profile switching). */
+  workspace?: string;
   /** Per-call stream param overrides (best-effort). */
   streamParams?: AgentStreamParams;
 };

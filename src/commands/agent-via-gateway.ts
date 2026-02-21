@@ -140,6 +140,8 @@ export async function agentViaGatewayCommand(opts: AgentCliOpts, runtime: Runtim
   const channel = normalizeMessageChannel(opts.channel) ?? DEFAULT_CHAT_CHANNEL;
   const idempotencyKey = opts.runId?.trim() || randomIdempotencyKey();
 
+  const workspaceOverride = process.env.OPENCLAW_WORKSPACE?.trim() || undefined;
+
   const response = await withProgress(
     {
       label: "Waiting for agent reply…",
@@ -165,6 +167,7 @@ export async function agentViaGatewayCommand(opts: AgentCliOpts, runtime: Runtim
           lane: opts.lane,
           extraSystemPrompt: opts.extraSystemPrompt,
           idempotencyKey,
+          workspace: workspaceOverride,
         },
         expectFinal: true,
         timeoutMs: gatewayTimeoutMs,
@@ -236,6 +239,8 @@ async function agentViaGatewayStreamJson(opts: AgentCliOpts, _runtime: RuntimeEn
   const channel = normalizeMessageChannel(opts.channel) ?? DEFAULT_CHAT_CHANNEL;
   const idempotencyKey = opts.runId?.trim() || randomIdempotencyKey();
 
+  const streamWorkspaceOverride = process.env.OPENCLAW_WORKSPACE?.trim() || undefined;
+
   // Capture the runId from early gateway events so we can abort the
   // correct run when the process receives SIGTERM/SIGINT.
   let capturedRunId: string | undefined;
@@ -267,6 +272,7 @@ async function agentViaGatewayStreamJson(opts: AgentCliOpts, _runtime: RuntimeEn
         lane: opts.lane,
         extraSystemPrompt: opts.extraSystemPrompt,
         idempotencyKey,
+        workspace: streamWorkspaceOverride,
       },
       expectFinal: true,
       timeoutMs: gatewayTimeoutMs,
