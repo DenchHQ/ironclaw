@@ -11,6 +11,9 @@
 #                     2026.2.7     → 2026.2.7-1
 #   (no flag)         Publish whatever version is already in package.json.
 #
+# Flags:
+#   --skip-tests  Skip running tests before build/publish.
+#
 # Environment:
 #   NPM_TOKEN   Required. npm auth token for publishing.
 
@@ -96,6 +99,7 @@ MODE=""
 UPSTREAM_VERSION=""
 DRY_RUN=false
 SKIP_BUILD=false
+SKIP_TESTS=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -114,6 +118,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-build)
       SKIP_BUILD=true
+      shift
+      ;;
+    --skip-tests)
+      SKIP_TESTS=true
       shift
       ;;
     --help|-h)
@@ -171,6 +179,13 @@ fi
 
 npm version "$VERSION" --no-git-tag-version --allow-same-version "${NPM_FLAGS[@]}"
 
+# ── pre-flight: tests ────────────────────────────────────────────────────────
+
+if [[ "$SKIP_TESTS" != true ]] && [[ "$SKIP_BUILD" != true ]]; then
+  echo "running tests..."
+  pnpm test
+fi
+
 # ── build ────────────────────────────────────────────────────────────────────
 
 # The `prepack` script (triggered by `npm publish`) runs the full build chain:
@@ -180,6 +195,9 @@ npm version "$VERSION" --no-git-tag-version --allow-same-version "${NPM_FLAGS[@]
 if [[ "$SKIP_BUILD" != true ]]; then
   echo "building..."
   pnpm build
+
+  echo "building web app (standalone verification)..."
+  pnpm web:build
 fi
 
 # ── publish ──────────────────────────────────────────────────────────────────
@@ -197,6 +215,17 @@ STANDALONE_SERVER="apps/web/.next/standalone/apps/web/server.js"
 if [[ ! -f "$STANDALONE_SERVER" ]]; then
   echo "warning: standalone web app build not found after publish ($STANDALONE_SERVER)"
   echo "         users may not get a working Web UI — check the prepack step"
+fi
+
+# ── post-publish: commit + push version bump ─────────────────────────────────
+
+if git diff --quiet package.json 2>/dev/null; then
+  echo "package.json unchanged — skipping git commit"
+else
+  echo "committing version bump..."
+  git add package.json
+  git commit -m "release: v${VERSION}"
+  git push
 fi
 
 echo ""
