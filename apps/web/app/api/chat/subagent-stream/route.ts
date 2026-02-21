@@ -20,9 +20,9 @@ function ensureRegistered(sessionKey: string): boolean {
 	if (!existsSync(registryPath)) {return false;}
 
 	try {
-		const raw = JSON.parse(readFileSync(registryPath, "utf-8"));
+		const raw = JSON.parse(readFileSync(registryPath, "utf-8")) as { runs?: Record<string, Record<string, unknown>> };
 		const runs = raw?.runs;
-		if (!runs || typeof runs !== "object") {return false;}
+		if (!runs) {return false;}
 
 		for (const entry of Object.values(runs)) {
 			if (entry.childSessionKey === sessionKey) {

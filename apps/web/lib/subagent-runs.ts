@@ -184,9 +184,9 @@ function readDiskStatus(sessionKey: string): "running" | "completed" | "error" {
 	const registryPath = join(resolveOpenClawStateDir(), "subagents", "runs.json");
 	if (!existsSync(registryPath)) {return "running";}
 	try {
-		const raw = JSON.parse(readFileSync(registryPath, "utf-8"));
+		const raw = JSON.parse(readFileSync(registryPath, "utf-8")) as { runs?: Record<string, Record<string, unknown>> };
 		const runs = raw?.runs;
-		if (!runs || typeof runs !== "object") {return "running";}
+		if (!runs) {return "running";}
 		for (const entry of Object.values(runs)) {
 			if (entry.childSessionKey === sessionKey) {
 				if (typeof entry.endedAt !== "number") {return "running";}
@@ -477,9 +477,9 @@ export function ensureRegisteredFromDisk(
 	if (!existsSync(registryPath)) {return false;}
 
 	try {
-		const raw = JSON.parse(readFileSync(registryPath, "utf-8"));
+		const raw = JSON.parse(readFileSync(registryPath, "utf-8")) as { runs?: Record<string, Record<string, unknown>> };
 		const runs = raw?.runs;
-		if (!runs || typeof runs !== "object") {return false;}
+		if (!runs) {return false;}
 
 		for (const entry of Object.values(runs)) {
 			if (entry.childSessionKey === sessionKey) {
