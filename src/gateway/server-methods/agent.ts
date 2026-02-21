@@ -38,6 +38,8 @@ import {
   validateAgentIdentityParams,
   validateAgentParams,
   validateAgentWaitParams,
+  validateAgentSubscribeParams,
+  validateAgentUnsubscribeParams,
 } from "../protocol/index.js";
 import {
   canonicalizeSpawnedByForAgent,
@@ -689,5 +691,48 @@ export const agentHandlers: GatewayRequestHandlers = {
       endedAt: snapshot.endedAt,
       error: snapshot.error,
     });
+  },
+
+  "agent.subscribe": ({ params, client, respond, context }) => {
+    const validated = validateAgentSubscribeParams(params);
+    if (!validated.ok) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_PARAMS, formatValidationErrors(validated.errors)),
+      );
+      return;
+    }
+    const p = validated.value;
+    const connId = client?.connId;
+    if (!connId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_PARAMS, "no connection id"));
+      return;
+    }
+    context.registerSessionSubscription(p.sessionKey, connId);
+
+    // Replay buffered events past the caller's cursor.
+    const afterSeq = typeof p.afterSeq === "number" ? p.afterSeq : 0;
+    const replayed = context.replaySessionEvents(p.sessionKey, afterSeq, connId);
+    respond(true, { cursor: context.currentGlobalSeq(), replayed });
+  },
+
+  "agent.unsubscribe": ({ params, client, respond, context }) => {
+    const validated = validateAgentUnsubscribeParams(params);
+    if (!validated.ok) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_PARAMS, formatValidationErrors(validated.errors)),
+      );
+      return;
+    }
+    const connId = client?.connId;
+    if (!connId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_PARAMS, "no connection id"));
+      return;
+    }
+    context.unregisterSessionSubscription(validated.value.sessionKey, connId);
+    respond(true, {});
   },
 };
