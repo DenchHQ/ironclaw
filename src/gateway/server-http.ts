@@ -182,7 +182,16 @@ function writeUpgradeAuthFailure(
     );
     return;
   }
-  socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+  const reason = auth.reason ?? "unauthorized";
+  const body = JSON.stringify({
+    error: {
+      message: `Authentication failed (${reason}) — check your gateway token or password. See https://docs.openclaw.com/gateway/auth`,
+      type: "unauthorized",
+    },
+  });
+  socket.write(
+    `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n${body}`,
+  );
 }
 
 export type HooksRequestHandler = (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
@@ -285,7 +294,9 @@ export function createHooksRequestHandler(
       }
       res.statusCode = 401;
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Unauthorized");
+      res.end(
+        "Unauthorized — webhook secret mismatch. Check the hook secret matches the one configured in your integration.",
+      );
       return true;
     }
     clearHookAuthFailure(clientKey);

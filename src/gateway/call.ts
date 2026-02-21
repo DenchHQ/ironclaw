@@ -92,7 +92,7 @@ export function ensureExplicitGatewayAuth(params: {
     return;
   }
   const message = [
-    "gateway url override requires explicit credentials",
+    "gateway URL override requires explicit credentials — when using a custom gateway URL, you must provide --token/--password or set OPENCLAW_GATEWAY_TOKEN/OPENCLAW_GATEWAY_PASSWORD",
     params.errorHint,
     params.configPath ? `Config: ${params.configPath}` : undefined,
   ]

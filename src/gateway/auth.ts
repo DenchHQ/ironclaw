@@ -221,7 +221,9 @@ export function assertGatewayAuthConfigured(auth: ResolvedGatewayAuth): void {
     );
   }
   if (auth.mode === "password" && !auth.password) {
-    throw new Error("gateway auth mode is password, but no password was configured");
+    throw new Error(
+      "gateway auth mode is password, but no password was configured (set gateway.auth.password or OPENCLAW_GATEWAY_PASSWORD)",
+    );
   }
   if (auth.mode === "trusted-proxy") {
     if (!auth.trustedProxy) {
