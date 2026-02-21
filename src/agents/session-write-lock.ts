@@ -97,6 +97,19 @@ function registerCleanupHandlers(): void {
     process.on("exit", () => {
       releaseAllLocksSync();
     });
+
+    // Cleanup on uncaught exceptions / unhandled rejections that may
+    // terminate the process without firing 'exit' in older Node versions
+    // or custom environments.
+    process.on("uncaughtException", (err) => {
+      releaseAllLocksSync();
+      throw err; // re-throw to preserve default behaviour
+    });
+
+    process.on("unhandledRejection", (_reason) => {
+      releaseAllLocksSync();
+      // Don't re-throw; Node's default behaviour handles the rejection.
+    });
   }
 
   // Handle termination signals
