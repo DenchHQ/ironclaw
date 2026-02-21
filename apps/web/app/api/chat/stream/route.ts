@@ -32,9 +32,20 @@ export async function GET(req: Request) {
 	const encoder = new TextEncoder();
 	let closed = false;
 	let unsubscribe: (() => void) | null = null;
+	let keepalive: ReturnType<typeof setInterval> | null = null;
 
 	const stream = new ReadableStream({
 		start(controller) {
+			// Keep idle SSE connections alive while waiting for subagent announcements.
+			keepalive = setInterval(() => {
+				if (closed) {return;}
+				try {
+					controller.enqueue(encoder.encode(": keepalive\n\n"));
+				} catch {
+					/* ignore enqueue errors on closed stream */
+				}
+			}, 15_000);
+
 			// subscribeToRun with replay=true replays the full event buffer
 			// synchronously, then subscribes for live events.
 			unsubscribe = subscribeToRun(
@@ -44,6 +55,10 @@ export async function GET(req: Request) {
 					if (event === null) {
 						// Run completed — close the SSE stream.
 						closed = true;
+						if (keepalive) {
+							clearInterval(keepalive);
+							keepalive = null;
+						}
 						try {
 							controller.close();
 						} catch {
@@ -66,12 +81,20 @@ export async function GET(req: Request) {
 			if (!unsubscribe) {
 				// Run was cleaned up between getActiveRun and subscribe.
 				closed = true;
+				if (keepalive) {
+					clearInterval(keepalive);
+					keepalive = null;
+				}
 				controller.close();
 			}
 		},
 		cancel() {
 			// Client disconnected — unsubscribe only (don't kill the run).
 			closed = true;
+			if (keepalive) {
+				clearInterval(keepalive);
+				keepalive = null;
+			}
 			unsubscribe?.();
 		},
 	});
@@ -81,7 +104,7 @@ export async function GET(req: Request) {
 			"Content-Type": "text/event-stream",
 			"Cache-Control": "no-cache, no-transform",
 			Connection: "keep-alive",
-			"X-Run-Active": run.status === "running" ? "true" : "false",
+			"X-Run-Active": run.status === "running" || run.status === "waiting-for-subagents" ? "true" : "false",
 		},
 	});
 }
