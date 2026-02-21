@@ -511,8 +511,8 @@ export async function agentCliCommand(opts: AgentCliOpts, runtime: RuntimeEnv, d
   // Subscribe-only mode: tail events for a session key with replay cursor.
   const subscribeKey = (opts as Record<string, unknown>).subscribeSessionKey as string | undefined;
   if (subscribeKey && opts.streamJson) {
-    const afterSeq =
-      Number.parseInt(String((opts as Record<string, unknown>).afterSeq ?? "0"), 10) || 0;
+    const rawAfterSeq = (opts as Record<string, unknown>).afterSeq;
+    const afterSeq = Number.parseInt(typeof rawAfterSeq === "string" ? rawAfterSeq : "0", 10) || 0;
     return await agentSubscribeStreamJson(subscribeKey.trim(), afterSeq, runtime);
   }
 
