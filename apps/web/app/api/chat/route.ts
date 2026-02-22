@@ -1,35 +1,27 @@
 import type { UIMessage } from "ai";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { resolveAgentWorkspacePrefix } from "@/lib/workspace";
 import {
 	startRun,
+	startSubscribeRun,
 	hasActiveRun,
+	getActiveRun,
 	subscribeToRun,
 	persistUserMessage,
-	type SseEvent as ParentSseEvent,
+	persistSubscribeUserMessage,
+	reactivateSubscribeRun,
+	sendSubagentFollowUp,
+	type SseEvent,
 } from "@/lib/active-runs";
-import {
-	hasActiveSubagent,
-	isSubagentRunning,
-	ensureRegisteredFromDisk,
-	subscribeToSubagent,
-	persistUserMessage as persistSubagentUserMessage,
-	reactivateSubagent,
-	spawnSubagentMessage,
-	type SseEvent as SubagentSseEvent,
-} from "@/lib/subagent-runs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
 
-// Force Node.js runtime (required for child_process)
 export const runtime = "nodejs";
-
-// Allow streaming responses up to 10 minutes
 export const maxDuration = 600;
 
-function deriveSubagentParentSessionId(sessionKey: string): string {
+function deriveSubagentInfo(sessionKey: string): { parentSessionId: string; task: string } | null {
 	const registryPath = join(resolveOpenClawStateDir(), "subagents", "runs.json");
-	if (!existsSync(registryPath)) {return "";}
+	if (!existsSync(registryPath)) {return null;}
 	try {
 		const raw = JSON.parse(readFileSync(registryPath, "utf-8")) as {
 			runs?: Record<string, Record<string, unknown>>;
@@ -38,18 +30,14 @@ function deriveSubagentParentSessionId(sessionKey: string): string {
 			if (entry.childSessionKey !== sessionKey) {continue;}
 			const requester = typeof entry.requesterSessionKey === "string" ? entry.requesterSessionKey : "";
 			const match = requester.match(/^agent:[^:]+:web:(.+)$/);
-			return match?.[1] ?? "";
+			const parentSessionId = match?.[1] ?? "";
+			const task = typeof entry.task === "string" ? entry.task : "";
+			return { parentSessionId, task };
 		}
 	} catch {
 		// ignore
 	}
-	return "";
-}
-
-function ensureSubagentRegistered(sessionKey: string): boolean {
-	if (hasActiveSubagent(sessionKey)) {return true;}
-	const parentWebSessionId = deriveSubagentParentSessionId(sessionKey);
-	return ensureRegisteredFromDisk(sessionKey, parentWebSessionId);
+	return null;
 }
 
 export async function POST(req: Request) {
@@ -59,7 +47,6 @@ export async function POST(req: Request) {
 		sessionKey,
 	}: { messages: UIMessage[]; sessionId?: string; sessionKey?: string } = await req.json();
 
-	// Extract the latest user message text
 	const lastUserMessage = messages.filter((m) => m.role === "user").pop();
 	const userText =
 		lastUserMessage?.parts
@@ -76,15 +63,16 @@ export async function POST(req: Request) {
 
 	const isSubagentSession = typeof sessionKey === "string" && sessionKey.includes(":subagent:");
 
-	// Reject if a run is already active for this session.
 	if (!isSubagentSession && sessionId && hasActiveRun(sessionId)) {
 		return new Response("Active run in progress", { status: 409 });
 	}
-	if (isSubagentSession && isSubagentRunning(sessionKey)) {
-		return new Response("Active subagent run in progress", { status: 409 });
+	if (isSubagentSession && sessionKey) {
+		const existingRun = getActiveRun(sessionKey);
+		if (existingRun?.status === "running") {
+			return new Response("Active subagent run in progress", { status: 409 });
+		}
 	}
 
-	// Resolve workspace file paths to be agent-cwd-relative.
 	let agentMessage = userText;
 	const wsPrefix = resolveAgentWorkspacePrefix();
 	if (wsPrefix) {
@@ -94,34 +82,35 @@ export async function POST(req: Request) {
 		);
 	}
 
-	// Persist the user message server-side so it survives a page reload
-	// even if the client never gets a chance to save.
+	const runKey = isSubagentSession && sessionKey ? sessionKey : (sessionId as string);
+
 	if (isSubagentSession && sessionKey && lastUserMessage) {
-		if (!ensureSubagentRegistered(sessionKey)) {
-			return new Response("Subagent not found", { status: 404 });
+		let run = getActiveRun(sessionKey);
+		if (!run) {
+			const info = deriveSubagentInfo(sessionKey);
+			if (!info) {
+				return new Response("Subagent not found", { status: 404 });
+			}
+			run = startSubscribeRun({
+				sessionKey,
+				parentSessionId: info.parentSessionId,
+				task: info.task,
+			});
 		}
-		persistSubagentUserMessage(sessionKey, {
+		persistSubscribeUserMessage(sessionKey, {
 			id: lastUserMessage.id,
 			text: userText,
 		});
+		reactivateSubscribeRun(sessionKey);
+		if (!sendSubagentFollowUp(sessionKey, agentMessage)) {
+			return new Response("Failed to send subagent message", { status: 500 });
+		}
 	} else if (sessionId && lastUserMessage) {
 		persistUserMessage(sessionId, {
 			id: lastUserMessage.id,
 			content: userText,
 			parts: lastUserMessage.parts as unknown[],
 		});
-	}
-
-	// Start the agent run (decoupled from this HTTP connection).
-	// The child process will keep running even if this response is cancelled.
-	if (isSubagentSession && sessionKey) {
-		if (!reactivateSubagent(sessionKey)) {
-			return new Response("Subagent not found", { status: 404 });
-		}
-		if (!spawnSubagentMessage(sessionKey, agentMessage)) {
-			return new Response("Failed to start subagent run", { status: 500 });
-		}
-	} else if (sessionId) {
 		try {
 			startRun({
 				sessionId,
@@ -136,78 +125,40 @@ export async function POST(req: Request) {
 		}
 	}
 
-	// Stream SSE events to the client using the AI SDK v6 wire format.
 	const encoder = new TextEncoder();
 	let closed = false;
 	let unsubscribe: (() => void) | null = null;
 
 	const stream = new ReadableStream({
 		start(controller) {
-			if (!sessionId && !sessionKey) {
-				// No session — shouldn't happen but close gracefully.
+			if (!runKey) {
 				controller.close();
 				return;
 			}
 
-			unsubscribe = isSubagentSession && sessionKey
-				? subscribeToSubagent(
-					sessionKey,
-					(event: SubagentSseEvent | null) => {
-						if (closed) {return;}
-						if (event === null) {
-							closed = true;
-							try {
-								controller.close();
-							} catch {
-								/* already closed */
-							}
-							return;
-						}
-						try {
-							const json = JSON.stringify(event);
-							controller.enqueue(encoder.encode(`data: ${json}\n\n`));
-						} catch {
-							/* ignore enqueue errors on closed stream */
-						}
-					},
-					{ replay: false },
-				)
-				: subscribeToRun(
-				sessionId as string,
-				(event: ParentSseEvent | null) => {
+			unsubscribe = subscribeToRun(
+				runKey,
+				(event: SseEvent | null) => {
 					if (closed) {return;}
 					if (event === null) {
-						// Run completed — close the SSE stream.
 						closed = true;
-						try {
-							controller.close();
-						} catch {
-							/* already closed */
-						}
+						try { controller.close(); } catch { /* already closed */ }
 						return;
 					}
 					try {
 						const json = JSON.stringify(event);
-						controller.enqueue(
-							encoder.encode(`data: ${json}\n\n`),
-						);
-					} catch {
-						/* ignore enqueue errors on closed stream */
-					}
+						controller.enqueue(encoder.encode(`data: ${json}\n\n`));
+					} catch { /* ignore */ }
 				},
-				// Don't replay — we just created the run, the buffer is empty.
 				{ replay: false },
 			);
 
 			if (!unsubscribe) {
-				// Race: run was cleaned up between startRun and subscribe.
 				closed = true;
 				controller.close();
 			}
 		},
 		cancel() {
-			// Client disconnected — unsubscribe but keep the run alive.
-			// The ActiveRunManager continues buffering + persisting in the background.
 			closed = true;
 			unsubscribe?.();
 		},
