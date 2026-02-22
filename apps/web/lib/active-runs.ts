@@ -718,13 +718,21 @@ function wireChildProcess(run: ActiveRun): void {
 
 				if (toolName === "sessions_spawn" && !isError) {
 					const childSessionKey =
-						result?.details?.sessionKey as string | undefined;
+						result?.details?.childSessionKey as string | undefined;
 					const childRunId =
 						result?.details?.runId as string | undefined;
+					// task/label are in the tool input args, not the result
+					const spawnArgs = accToolMap.has(toolCallId)
+						? run.accumulated.parts[accToolMap.get(toolCallId)!]
+						: undefined;
 					const spawnTask =
-						result?.details?.task as string | undefined;
+						(spawnArgs as Record<string, unknown> | undefined)?.args
+							? ((spawnArgs as Record<string, unknown>).args as Record<string, unknown>)?.task as string | undefined
+							: undefined;
 					const spawnLabel =
-						result?.details?.label as string | undefined;
+						(spawnArgs as Record<string, unknown> | undefined)?.args
+							? ((spawnArgs as Record<string, unknown>).args as Record<string, unknown>)?.label as string | undefined
+							: undefined;
 					if (childSessionKey && childRunId) {
 						registerSubagent(run.sessionId, {
 							sessionKey: childSessionKey,
