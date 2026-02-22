@@ -263,14 +263,14 @@ function getCategoryFromPath(
 	return "other";
 }
 
-function shortenPath(path: string): string {
+function _shortenPath(path: string): string {
 	return path
 		.replace(/^\/Users\/[^/]+/, "~")
 		.replace(/^\/home\/[^/]+/, "~")
 		.replace(/^[A-Z]:\\Users\\[^\\]+/, "~");
 }
 
-const attachCategoryMeta: Record<string, { bg: string; fg: string }> = {
+const _attachCategoryMeta: Record<string, { bg: string; fg: string }> = {
 	image: { bg: "rgba(16, 185, 129, 0.15)", fg: "#10b981" },
 	video: { bg: "rgba(139, 92, 246, 0.15)", fg: "#8b5cf6" },
 	audio: { bg: "rgba(245, 158, 11, 0.15)", fg: "#f59e0b" },
@@ -280,7 +280,7 @@ const attachCategoryMeta: Record<string, { bg: string; fg: string }> = {
 	other: { bg: "rgba(107, 114, 128, 0.10)", fg: "#9ca3af" },
 };
 
-function AttachFileIcon({ category }: { category: string }) {
+function _AttachFileIcon({ category }: { category: string }) {
 	const props = {
 		width: 14,
 		height: 14,

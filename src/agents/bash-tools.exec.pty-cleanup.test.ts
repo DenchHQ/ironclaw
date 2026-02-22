@@ -1,9 +1,17 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { resetProcessRegistryForTests } from "./bash-process-registry";
+import { resetProcessRegistryForTests } from "./bash-process-registry.js";
+import { createExecTool } from "./bash-tools.exec.js";
+
+const { ptySpawnMock } = vi.hoisted(() => ({
+  ptySpawnMock: vi.fn(),
+}));
+
+vi.mock("@lydell/node-pty", () => ({
+  spawn: (...args: unknown[]) => ptySpawnMock(...args),
+}));
 
 afterEach(() => {
   resetProcessRegistryForTests();
-  vi.resetModules();
   vi.clearAllMocks();
 });
 
@@ -11,25 +19,20 @@ test("exec disposes PTY listeners after normal exit", async () => {
   const disposeData = vi.fn();
   const disposeExit = vi.fn();
 
-  vi.doMock("@lydell/node-pty", () => ({
-    spawn: () => {
-      return {
-        pid: 0,
-        write: vi.fn(),
-        onData: (listener: (value: string) => void) => {
-          setTimeout(() => listener("ok"), 0);
-          return { dispose: disposeData };
-        },
-        onExit: (listener: (event: { exitCode: number; signal?: number }) => void) => {
-          setTimeout(() => listener({ exitCode: 0 }), 0);
-          return { dispose: disposeExit };
-        },
-        kill: vi.fn(),
-      };
+  ptySpawnMock.mockImplementation(() => ({
+    pid: 0,
+    write: vi.fn(),
+    onData: (listener: (value: string) => void) => {
+      listener("ok");
+      return { dispose: disposeData };
     },
+    onExit: (listener: (event: { exitCode: number; signal?: number }) => void) => {
+      listener({ exitCode: 0 });
+      return { dispose: disposeExit };
+    },
+    kill: vi.fn(),
   }));
 
-  const { createExecTool } = await import("./bash-tools.exec");
   const tool = createExecTool({ allowBackground: false });
   const result = await tool.execute("toolcall", {
     command: "echo ok",
@@ -44,21 +47,23 @@ test("exec disposes PTY listeners after normal exit", async () => {
 test("exec tears down PTY resources on timeout", async () => {
   const disposeData = vi.fn();
   const disposeExit = vi.fn();
-  const kill = vi.fn();
+  let exitListener: ((event: { exitCode: number; signal?: number }) => void) | undefined;
+  const kill = vi.fn(() => {
+    // Mirror real PTY behavior: process exits shortly after force-kill.
+    exitListener?.({ exitCode: 137, signal: 9 });
+  });
 
-  vi.doMock("@lydell/node-pty", () => ({
-    spawn: () => {
-      return {
-        pid: 0,
-        write: vi.fn(),
-        onData: () => ({ dispose: disposeData }),
-        onExit: () => ({ dispose: disposeExit }),
-        kill,
-      };
+  ptySpawnMock.mockImplementation(() => ({
+    pid: 0,
+    write: vi.fn(),
+    onData: () => ({ dispose: disposeData }),
+    onExit: (listener: (event: { exitCode: number; signal?: number }) => void) => {
+      exitListener = listener;
+      return { dispose: disposeExit };
     },
+    kill,
   }));
 
-  const { createExecTool } = await import("./bash-tools.exec");
   const tool = createExecTool({ allowBackground: false });
   await expect(
     tool.execute("toolcall", {

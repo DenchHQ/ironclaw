@@ -11,7 +11,8 @@ import {
 } from "./auth.js";
 import { normalizeControlUiBasePath } from "./control-ui-shared.js";
 import { resolveHooksConfig } from "./hooks.js";
-import { isLoopbackHost, resolveGatewayBindHost } from "./net.js";
+import { isLoopbackHost, isTrustedProxyAddress, resolveGatewayBindHost } from "./net.js";
+import { mergeGatewayTailscaleConfig } from "./startup-auth.js";
 
 export type GatewayRuntimeConfig = {
   bindHost: string;
@@ -62,21 +63,13 @@ export async function resolveGatewayRuntimeConfig(params: {
     typeof controlUiRootRaw === "string" && controlUiRootRaw.trim().length > 0
       ? controlUiRootRaw.trim()
       : undefined;
-  const authBase = params.cfg.gateway?.auth ?? {};
-  const authOverrides = params.auth ?? {};
-  const authConfig = {
-    ...authBase,
-    ...authOverrides,
-  };
   const tailscaleBase = params.cfg.gateway?.tailscale ?? {};
   const tailscaleOverrides = params.tailscale ?? {};
-  const tailscaleConfig = {
-    ...tailscaleBase,
-    ...tailscaleOverrides,
-  };
+  const tailscaleConfig = mergeGatewayTailscaleConfig(tailscaleBase, tailscaleOverrides);
   const tailscaleMode = tailscaleConfig.mode ?? "off";
   const resolvedAuth = resolveGatewayAuth({
-    authConfig,
+    authConfig: params.cfg.gateway?.auth,
+    authOverride: params.auth,
     env: process.env,
     tailscaleMode,
   });
@@ -108,15 +101,20 @@ export async function resolveGatewayRuntimeConfig(params: {
   }
 
   if (authMode === "trusted-proxy") {
-    if (isLoopbackHost(bindHost)) {
-      throw new Error(
-        "gateway auth mode=trusted-proxy makes no sense with bind=loopback; use bind=lan or bind=custom with gateway.trustedProxies configured",
-      );
-    }
     if (trustedProxies.length === 0) {
       throw new Error(
         "gateway auth mode=trusted-proxy requires gateway.trustedProxies to be configured with at least one proxy IP",
       );
+    }
+    if (isLoopbackHost(bindHost)) {
+      const hasLoopbackTrustedProxy =
+        isTrustedProxyAddress("127.0.0.1", trustedProxies) ||
+        isTrustedProxyAddress("::1", trustedProxies);
+      if (!hasLoopbackTrustedProxy) {
+        throw new Error(
+          "gateway auth mode=trusted-proxy with bind=loopback requires gateway.trustedProxies to include 127.0.0.1, ::1, or a loopback CIDR",
+        );
+      }
     }
   }
 

@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadConfig } from "../config/config.js";
 import { registerAgentRunContext, resetAgentRunContextForTest } from "../infra/agent-events.js";
+import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import {
   createAgentEventHandler,
   createChatRunState,
@@ -8,7 +10,33 @@ import {
   createSessionSubscriptionRegistry,
 } from "./server-chat.js";
 
+vi.mock("../config/config.js", () => ({
+  loadConfig: vi.fn(() => ({})),
+}));
+
+vi.mock("../infra/heartbeat-visibility.js", () => ({
+  resolveHeartbeatVisibility: vi.fn(() => ({
+    showOk: false,
+    showAlerts: true,
+    useIndicator: true,
+  })),
+}));
+
 describe("agent event handler", () => {
+  beforeEach(() => {
+    vi.mocked(loadConfig).mockReturnValue({});
+    vi.mocked(resolveHeartbeatVisibility).mockReturnValue({
+      showOk: false,
+      showAlerts: true,
+      useIndicator: true,
+    });
+    resetAgentRunContextForTest();
+  });
+
+  afterEach(() => {
+    resetAgentRunContextForTest();
+  });
+
   function createHarness(params?: {
     now?: number;
     resolveSessionKeyForRun?: (runId: string) => string | undefined;
@@ -52,21 +80,38 @@ describe("agent event handler", () => {
     };
   }
 
-  it("emits chat delta for assistant text-only events", () => {
-    const { broadcast, nodeSendToSession, chatRunState, handler, nowSpy } = createHarness({
-      now: 1_000,
+  function emitRun1AssistantText(
+    harness: ReturnType<typeof createHarness>,
+    text: string,
+  ): ReturnType<typeof createHarness> {
+    harness.chatRunState.registry.add("run-1", {
+      sessionKey: "session-1",
+      clientRunId: "client-1",
     });
-    chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
-
-    handler({
+    harness.handler({
       runId: "run-1",
       seq: 1,
       stream: "assistant",
       ts: Date.now(),
-      data: { text: "Hello world" },
+      data: { text },
     });
+    return harness;
+  }
 
-    const chatCalls = broadcast.mock.calls.filter(([event]) => event === "chat");
+  function chatBroadcastCalls(broadcast: ReturnType<typeof vi.fn>) {
+    return broadcast.mock.calls.filter(([event]) => event === "chat");
+  }
+
+  function sessionChatCalls(nodeSendToSession: ReturnType<typeof vi.fn>) {
+    return nodeSendToSession.mock.calls.filter(([, event]) => event === "chat");
+  }
+
+  it("emits chat delta for assistant text-only events", () => {
+    const { broadcast, nodeSendToSession, nowSpy } = emitRun1AssistantText(
+      createHarness({ now: 1_000 }),
+      "Hello world",
+    );
+    const chatCalls = chatBroadcastCalls(broadcast);
     expect(chatCalls).toHaveLength(1);
     const payload = chatCalls[0]?.[1] as {
       state?: string;
@@ -74,29 +119,32 @@ describe("agent event handler", () => {
     };
     expect(payload.state).toBe("delta");
     expect(payload.message?.content?.[0]?.text).toBe("Hello world");
-    const sessionChatCalls = nodeSendToSession.mock.calls.filter(([, event]) => event === "chat");
-    expect(sessionChatCalls).toHaveLength(1);
+    expect(sessionChatCalls(nodeSendToSession)).toHaveLength(1);
+    nowSpy?.mockRestore();
+  });
+
+  it("strips inline directives from assistant chat events", () => {
+    const { broadcast, nodeSendToSession, nowSpy } = emitRun1AssistantText(
+      createHarness({ now: 1_000 }),
+      "Hello [[reply_to_current]] world [[audio_as_voice]]",
+    );
+    const chatCalls = chatBroadcastCalls(broadcast);
+    expect(chatCalls).toHaveLength(1);
+    const payload = chatCalls[0]?.[1] as {
+      message?: { content?: Array<{ text?: string }> };
+    };
+    expect(payload.message?.content?.[0]?.text).toBe("Hello  world ");
+    expect(sessionChatCalls(nodeSendToSession)).toHaveLength(1);
     nowSpy?.mockRestore();
   });
 
   it("does not emit chat delta for NO_REPLY streaming text", () => {
-    const { broadcast, nodeSendToSession, chatRunState, handler, nowSpy } = createHarness({
-      now: 1_000,
-    });
-    chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
-
-    handler({
-      runId: "run-1",
-      seq: 1,
-      stream: "assistant",
-      ts: Date.now(),
-      data: { text: " NO_REPLY  " },
-    });
-
-    const chatCalls = broadcast.mock.calls.filter(([event]) => event === "chat");
-    expect(chatCalls).toHaveLength(0);
-    const sessionChatCalls = nodeSendToSession.mock.calls.filter(([, event]) => event === "chat");
-    expect(sessionChatCalls).toHaveLength(0);
+    const { broadcast, nodeSendToSession, nowSpy } = emitRun1AssistantText(
+      createHarness({ now: 1_000 }),
+      " NO_REPLY  ",
+    );
+    expect(chatBroadcastCalls(broadcast)).toHaveLength(0);
+    expect(sessionChatCalls(nodeSendToSession)).toHaveLength(0);
     nowSpy?.mockRestore();
   });
 
@@ -121,13 +169,12 @@ describe("agent event handler", () => {
       data: { phase: "end" },
     });
 
-    const chatCalls = broadcast.mock.calls.filter(([event]) => event === "chat");
+    const chatCalls = chatBroadcastCalls(broadcast);
     expect(chatCalls).toHaveLength(1);
     const payload = chatCalls[0]?.[1] as { state?: string; message?: unknown };
     expect(payload.state).toBe("final");
     expect(payload.message).toBeUndefined();
-    const sessionChatCalls = nodeSendToSession.mock.calls.filter(([, event]) => event === "chat");
-    expect(sessionChatCalls).toHaveLength(1);
+    expect(sessionChatCalls(nodeSendToSession)).toHaveLength(1);
     nowSpy?.mockRestore();
   });
 

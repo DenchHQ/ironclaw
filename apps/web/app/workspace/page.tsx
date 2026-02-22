@@ -2217,7 +2217,7 @@ function ObjectView({
   const [totalCount, setTotalCount] = useState(data.totalCount ?? data.entries.length);
   const [entries, setEntries] = useState(data.entries);
   const [serverSearch, setServerSearch] = useState("");
-  const [sortRules, setSortRules] = useState<SortRule[] | undefined>(undefined);
+  const [sortRules, _setSortRules] = useState<SortRule[] | undefined>(undefined);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Column visibility: maps field IDs to boolean (false = hidden)

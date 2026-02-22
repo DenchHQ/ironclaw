@@ -17,7 +17,7 @@ import {
 	existsSync,
 	mkdirSync,
 } from "node:fs";
-import { resolveWebChatDir } from "./workspace";
+import { resolveWebChatDir, resolveOpenClawStateDir } from "./workspace";
 import {
 	type AgentEvent,
 	spawnAgentProcess,
@@ -29,9 +29,6 @@ import {
 	parseErrorBody,
 	parseErrorFromStderr,
 } from "./agent-runner";
-import {
-	hasRunningSubagentsForParent,
-} from "./subagent-runs";
 
 // ── Types ──
 
@@ -78,12 +75,27 @@ export type ActiveRun = {
 	lastGlobalSeq: number;
 	/** @internal subscribe child process for waiting-for-subagents continuation */
 	_subscribeProcess?: ChildProcess | null;
+	/** Full gateway session key (used for subagent subscribe-only runs) */
+	sessionKey?: string;
+	/** Parent web session ID (for subagent runs) */
+	parentSessionId?: string;
+	/** Subagent task description */
+	task?: string;
+	/** Subagent label */
+	label?: string;
+	/** True for subscribe-only runs (subagents) that don't own the agent process */
+	isSubscribeOnly?: boolean;
+	/** Set when lifecycle/end is received; defers finalization until subscribe close */
+	_lifecycleEnded?: boolean;
+	/** Safety timer to finalize if subscribe process hangs after lifecycle/end */
+	_finalizeTimer?: ReturnType<typeof setTimeout> | null;
 };
 
 // ── Constants ──
 
 const PERSIST_INTERVAL_MS = 2_000;
 const CLEANUP_GRACE_MS = 30_000;
+const SUBSCRIBE_CLEANUP_GRACE_MS = 24 * 60 * 60_000;
 
 const SILENT_REPLY_TOKEN = "NO_REPLY";
 
@@ -142,6 +154,33 @@ export function getRunningSessionIds(): string[] {
 	return ids;
 }
 
+/** Check if any subagent sessions are still running for a parent web session. */
+export function hasRunningSubagentsForParent(parentWebSessionId: string): boolean {
+	for (const [_key, run] of activeRuns) {
+		if (run.isSubscribeOnly && run.parentSessionId === parentWebSessionId && run.status === "running") {
+			return true;
+		}
+	}
+	// Fallback: check the gateway disk registry
+	const registryPath = join(resolveOpenClawStateDir(), "subagents", "runs.json");
+	if (!existsSync(registryPath)) {return false;}
+	try {
+		const raw = JSON.parse(readFileSync(registryPath, "utf-8")) as {
+			runs?: Record<string, Record<string, unknown>>;
+		};
+		const runs = raw?.runs;
+		if (!runs) {return false;}
+		const parentKeyPattern = `:web:${parentWebSessionId}`;
+		for (const entry of Object.values(runs)) {
+			const requester = typeof entry.requesterSessionKey === "string" ? entry.requesterSessionKey : "";
+			if (!requester.endsWith(parentKeyPattern)) {continue;}
+			if (typeof entry.endedAt === "number") {continue;}
+			return true;
+		}
+	} catch { /* ignore */ }
+	return false;
+}
+
 /**
  * Subscribe to an active run's SSE events.
  *
@@ -178,6 +217,85 @@ export function subscribeToRun(
 	return () => {
 		run.subscribers.delete(callback);
 	};
+}
+
+/**
+ * Reactivate a completed subscribe-only run for a follow-up message.
+ * Resets status to "running" and restarts the subscribe stream.
+ */
+export function reactivateSubscribeRun(sessionKey: string): boolean {
+	const run = activeRuns.get(sessionKey);
+	if (!run?.isSubscribeOnly) {return false;}
+	if (run.status === "running") {return true;}
+
+	run.status = "running";
+	run._lifecycleEnded = false;
+	if (run._finalizeTimer) {clearTimeout(run._finalizeTimer); run._finalizeTimer = null;}
+
+	run.accumulated = {
+		id: `assistant-${sessionKey}-${Date.now()}`,
+		role: "assistant",
+		parts: [],
+	};
+
+	const newChild = spawnAgentSubscribeProcess(sessionKey, run.lastGlobalSeq);
+	run._subscribeProcess = newChild;
+	run.childProcess = newChild;
+	wireSubscribeOnlyProcess(run, newChild, sessionKey);
+	return true;
+}
+
+/**
+ * Send a follow-up message to a subagent session via gateway RPC.
+ * The subscribe stream picks up the agent's response events.
+ */
+export function sendSubagentFollowUp(sessionKey: string, message: string): boolean {
+	try {
+		const root = resolvePackageRoot();
+		const devScript = join(root, "scripts", "run-node.mjs");
+		const prodScript = join(root, "openclaw.mjs");
+		const scriptPath = existsSync(devScript) ? devScript : prodScript;
+		const child = spawn(
+			"node",
+			[
+				scriptPath, "gateway", "call", "agent",
+				"--params", JSON.stringify({
+					message, sessionKey,
+					idempotencyKey: `follow-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+					deliver: false, channel: "webchat", lane: "subagent", timeout: 0,
+				}),
+				"--json", "--timeout", "10000",
+			],
+			{ cwd: root, env: { ...process.env }, stdio: "ignore", detached: true },
+		);
+		child.unref();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Persist a user message for a subscribe-only (subagent) run.
+ * Emits a user-message event so reconnecting clients see the message.
+ */
+export function persistSubscribeUserMessage(
+	sessionKey: string,
+	msg: { id?: string; text: string },
+): boolean {
+	const run = activeRuns.get(sessionKey);
+	if (!run) {return false;}
+	const event: SseEvent = {
+		type: "user-message",
+		id: msg.id ?? `user-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		text: msg.text,
+	};
+	run.eventBuffer.push(event);
+	for (const sub of run.subscribers) {
+		try { sub(event); } catch { /* ignore */ }
+	}
+	schedulePersist(run);
+	return true;
 }
 
 /** Abort a running agent. Returns true if a run was actually aborted. */
@@ -331,6 +449,321 @@ export function startRun(params: {
 
 	wireChildProcess(run);
 	return run;
+}
+
+/**
+ * Start a subscribe-only run for a subagent session.
+ * The agent is already running in the gateway; we just subscribe to its
+ * event stream so buffering, persistence, and reconnection work identically
+ * to parent sessions.
+ */
+export function startSubscribeRun(params: {
+	sessionKey: string;
+	parentSessionId: string;
+	task: string;
+	label?: string;
+}): ActiveRun {
+	const { sessionKey, parentSessionId, task, label } = params;
+
+	if (activeRuns.has(sessionKey)) {
+		return activeRuns.get(sessionKey)!;
+	}
+
+	const abortController = new AbortController();
+	const subscribeChild = spawnAgentSubscribeProcess(sessionKey, 0);
+
+	const run: ActiveRun = {
+		sessionId: sessionKey,
+		childProcess: subscribeChild,
+		eventBuffer: [],
+		subscribers: new Set(),
+		accumulated: {
+			id: `assistant-${sessionKey}-${Date.now()}`,
+			role: "assistant",
+			parts: [],
+		},
+		status: "running",
+		startedAt: Date.now(),
+		exitCode: null,
+		abortController,
+		_persistTimer: null,
+		_lastPersistedAt: 0,
+		lastGlobalSeq: 0,
+		sessionKey,
+		parentSessionId,
+		task,
+		label,
+		isSubscribeOnly: true,
+		_lifecycleEnded: false,
+		_finalizeTimer: null,
+	};
+
+	activeRuns.set(sessionKey, run);
+	wireSubscribeOnlyProcess(run, subscribeChild, sessionKey);
+	return run;
+}
+
+/**
+ * Wire event processing for a subscribe-only run (subagent).
+ * Uses the same processParentEvent pipeline as parent runs,
+ * with deferred finalization on lifecycle/end.
+ */
+function wireSubscribeOnlyProcess(
+	run: ActiveRun,
+	child: ChildProcess,
+	sessionKey: string,
+): void {
+	let idCounter = 0;
+	const nextId = (prefix: string) =>
+		`${prefix}-${Date.now()}-${++idCounter}`;
+
+	let currentTextId = "";
+	let currentReasoningId = "";
+	let textStarted = false;
+	let reasoningStarted = false;
+	let statusReasoningActive = false;
+	let agentErrorReported = false;
+
+	let accTextIdx = -1;
+	let accReasoningIdx = -1;
+	const accToolMap = new Map<string, number>();
+
+	const accAppendReasoning = (delta: string) => {
+		if (accReasoningIdx < 0) {
+			run.accumulated.parts.push({ type: "reasoning", text: delta });
+			accReasoningIdx = run.accumulated.parts.length - 1;
+		} else {
+			(run.accumulated.parts[accReasoningIdx] as { type: "reasoning"; text: string }).text += delta;
+		}
+	};
+
+	const accAppendText = (delta: string) => {
+		if (accTextIdx < 0) {
+			run.accumulated.parts.push({ type: "text", text: delta });
+			accTextIdx = run.accumulated.parts.length - 1;
+		} else {
+			(run.accumulated.parts[accTextIdx] as { type: "text"; text: string }).text += delta;
+		}
+	};
+
+	const emit = (event: SseEvent) => {
+		run.eventBuffer.push(event);
+		for (const sub of run.subscribers) {
+			try { sub(event); } catch { /* ignore */ }
+		}
+		schedulePersist(run);
+	};
+
+	const emitError = (message: string) => {
+		closeReasoning();
+		closeText();
+		const tid = nextId("text");
+		emit({ type: "text-start", id: tid });
+		emit({ type: "text-delta", id: tid, delta: `[error] ${message}` });
+		emit({ type: "text-end", id: tid });
+		accAppendText(`[error] ${message}`);
+	};
+
+	const closeReasoning = () => {
+		if (reasoningStarted) {
+			emit({ type: "reasoning-end", id: currentReasoningId });
+			reasoningStarted = false;
+			statusReasoningActive = false;
+		}
+		accReasoningIdx = -1;
+	};
+
+	const closeText = () => {
+		if (textStarted) {
+			const lastPart = run.accumulated.parts[accTextIdx];
+			if (lastPart?.type === "text" && isLeakedSilentReplyToken(lastPart.text)) {
+				run.accumulated.parts.splice(accTextIdx, 1);
+			}
+			emit({ type: "text-end", id: currentTextId });
+			textStarted = false;
+		}
+		accTextIdx = -1;
+	};
+
+	const openStatusReasoning = (label: string) => {
+		closeReasoning();
+		closeText();
+		currentReasoningId = nextId("status");
+		emit({ type: "reasoning-start", id: currentReasoningId });
+		emit({ type: "reasoning-delta", id: currentReasoningId, delta: label });
+		reasoningStarted = true;
+		statusReasoningActive = true;
+	};
+
+	const processEvent = (ev: AgentEvent) => {
+		if (ev.event === "agent" && ev.stream === "lifecycle" && ev.data?.phase === "start") {
+			openStatusReasoning("Preparing response...");
+		}
+
+		if (ev.event === "agent" && ev.stream === "thinking") {
+			const delta = typeof ev.data?.delta === "string" ? ev.data.delta : undefined;
+			if (delta) {
+				if (statusReasoningActive) { closeReasoning(); }
+				if (!reasoningStarted) {
+					currentReasoningId = nextId("reasoning");
+					emit({ type: "reasoning-start", id: currentReasoningId });
+					reasoningStarted = true;
+				}
+				emit({ type: "reasoning-delta", id: currentReasoningId, delta });
+				accAppendReasoning(delta);
+			}
+		}
+
+		if (ev.event === "agent" && ev.stream === "assistant") {
+			const delta = typeof ev.data?.delta === "string" ? ev.data.delta : undefined;
+			const textFallback = !delta && typeof ev.data?.text === "string" ? ev.data.text : undefined;
+			const chunk = delta ?? textFallback;
+			if (chunk) {
+				closeReasoning();
+				if (!textStarted) {
+					currentTextId = nextId("text");
+					emit({ type: "text-start", id: currentTextId });
+					textStarted = true;
+				}
+				emit({ type: "text-delta", id: currentTextId, delta: chunk });
+				accAppendText(chunk);
+			}
+			if (typeof ev.data?.stopReason === "string" && ev.data.stopReason === "error" && typeof ev.data?.errorMessage === "string" && !agentErrorReported) {
+				agentErrorReported = true;
+				emitError(parseErrorBody(ev.data.errorMessage));
+			}
+		}
+
+		if (ev.event === "agent" && ev.stream === "tool") {
+			const phase = typeof ev.data?.phase === "string" ? ev.data.phase : undefined;
+			const toolCallId = typeof ev.data?.toolCallId === "string" ? ev.data.toolCallId : "";
+			const toolName = typeof ev.data?.name === "string" ? ev.data.name : "";
+
+			if (phase === "start") {
+				closeReasoning();
+				closeText();
+				const args = ev.data?.args && typeof ev.data.args === "object" ? (ev.data.args as Record<string, unknown>) : {};
+				emit({ type: "tool-input-start", toolCallId, toolName });
+				emit({ type: "tool-input-available", toolCallId, toolName, input: args });
+				run.accumulated.parts.push({ type: "tool-invocation", toolCallId, toolName, args });
+				accToolMap.set(toolCallId, run.accumulated.parts.length - 1);
+			} else if (phase === "result") {
+				const isError = ev.data?.isError === true;
+				const result = extractToolResult(ev.data?.result);
+				if (isError) {
+					const errorText = result?.text || (result?.details?.error as string | undefined) || "Tool execution failed";
+					emit({ type: "tool-output-error", toolCallId, errorText });
+				} else {
+					const output = buildToolOutput(result);
+					emit({ type: "tool-output-available", toolCallId, output });
+					const idx = accToolMap.get(toolCallId);
+					if (idx !== undefined) {
+						const part = run.accumulated.parts[idx];
+						if (part.type === "tool-invocation") { part.result = output; }
+					}
+				}
+			}
+		}
+
+		if (ev.event === "agent" && ev.stream === "compaction") {
+			const phase = typeof ev.data?.phase === "string" ? ev.data.phase : undefined;
+			if (phase === "start") { openStatusReasoning("Optimizing session context..."); }
+			else if (phase === "end") {
+				if (statusReasoningActive) {
+					if (ev.data?.willRetry === true) {
+						emit({ type: "reasoning-delta", id: currentReasoningId, delta: "\nRetrying with compacted context..." });
+					} else { closeReasoning(); }
+				}
+			}
+		}
+
+		if (ev.event === "agent" && ev.stream === "lifecycle" && ev.data?.phase === "end") {
+			closeReasoning();
+			closeText();
+			run._lifecycleEnded = true;
+			if (run._finalizeTimer) { clearTimeout(run._finalizeTimer); }
+			run._finalizeTimer = setTimeout(() => {
+				run._finalizeTimer = null;
+				if (run.status === "running") { finalizeSubscribeRun(run); }
+			}, 5_000);
+		}
+
+		if (ev.event === "agent" && ev.stream === "lifecycle" && ev.data?.phase === "error" && !agentErrorReported) {
+			const msg = parseAgentErrorMessage(ev.data);
+			if (msg) { agentErrorReported = true; emitError(msg); }
+			finalizeSubscribeRun(run, "error");
+		}
+
+		if (ev.event === "error" && !agentErrorReported) {
+			const msg = parseAgentErrorMessage(ev.data ?? (ev as unknown as Record<string, unknown>));
+			if (msg) { agentErrorReported = true; emitError(msg); }
+		}
+	};
+
+	const rl = createInterface({ input: child.stdout! });
+
+	rl.on("line", (line: string) => {
+		if (!line.trim()) { return; }
+		let ev: AgentEvent;
+		try { ev = JSON.parse(line) as AgentEvent; } catch { return; }
+		if (ev.sessionKey && ev.sessionKey !== sessionKey) { return; }
+		const gSeq = typeof (ev as Record<string, unknown>).globalSeq === "number"
+			? (ev as Record<string, unknown>).globalSeq as number
+			: undefined;
+		if (gSeq !== undefined) {
+			if (gSeq <= run.lastGlobalSeq) { return; }
+			run.lastGlobalSeq = gSeq;
+		}
+		processEvent(ev);
+	});
+
+	child.on("close", () => {
+		if (run._subscribeProcess === child) { run._subscribeProcess = null; }
+		if (run.status !== "running") { return; }
+		if (run._lifecycleEnded) {
+			if (run._finalizeTimer) { clearTimeout(run._finalizeTimer); run._finalizeTimer = null; }
+			finalizeSubscribeRun(run);
+			return;
+		}
+		setTimeout(() => {
+			if (run.status === "running" && !run._subscribeProcess) {
+				const newChild = spawnAgentSubscribeProcess(sessionKey, run.lastGlobalSeq);
+				run._subscribeProcess = newChild;
+				run.childProcess = newChild;
+				wireSubscribeOnlyProcess(run, newChild, sessionKey);
+			}
+		}, 300);
+	});
+
+	child.on("error", (err) => {
+		console.error("[active-runs] Subscribe child error:", err);
+	});
+
+	child.stderr?.on("data", (chunk: Buffer) => {
+		console.error("[active-runs subscribe stderr]", chunk.toString());
+	});
+
+	run._subscribeProcess = child;
+}
+
+function finalizeSubscribeRun(run: ActiveRun, status: "completed" | "error" = "completed"): void {
+	if (run.status !== "running") { return; }
+	if (run._finalizeTimer) { clearTimeout(run._finalizeTimer); run._finalizeTimer = null; }
+
+	run.status = status;
+	flushPersistence(run);
+
+	for (const sub of run.subscribers) {
+		try { sub(null); } catch { /* ignore */ }
+	}
+	run.subscribers.clear();
+
+	stopSubscribeProcess(run);
+
+	const grace = run.isSubscribeOnly ? SUBSCRIBE_CLEANUP_GRACE_MS : CLEANUP_GRACE_MS;
+	setTimeout(() => {
+		if (activeRuns.get(run.sessionId) === run) { cleanupRun(run.sessionId); }
+	}, grace);
 }
 
 // ── Persistence helpers (called from route to persist user messages) ──
@@ -592,7 +1025,12 @@ function wireChildProcess(run: ActiveRun): void {
 				typeof ev.data?.delta === "string"
 					? ev.data.delta
 					: undefined;
-			if (delta) {
+			const textFallback =
+				!delta && typeof ev.data?.text === "string"
+					? ev.data.text
+					: undefined;
+			const chunk = delta ?? textFallback;
+			if (chunk) {
 				closeReasoning();
 				if (!textStarted) {
 					currentTextId = nextId("text");
@@ -600,8 +1038,8 @@ function wireChildProcess(run: ActiveRun): void {
 					textStarted = true;
 				}
 				everSentText = true;
-				emit({ type: "text-delta", id: currentTextId, delta });
-				accAppendText(delta);
+				emit({ type: "text-delta", id: currentTextId, delta: chunk });
+				accAppendText(chunk);
 			}
 			// Media URLs
 			const mediaUrls = ev.data?.mediaUrls;
@@ -707,6 +1145,22 @@ function wireChildProcess(run: ActiveRun): void {
 						if (part.type === "tool-invocation") {
 							part.result = output;
 						}
+					}
+				}
+
+				if (toolName === "sessions_spawn" && !isError) {
+					const childSessionKey =
+						result?.details?.childSessionKey as string | undefined;
+					if (childSessionKey) {
+						const spawnArgs = accToolMap.has(toolCallId)
+							? (run.accumulated.parts[accToolMap.get(toolCallId)!] as { args?: Record<string, unknown> })?.args
+							: undefined;
+						startSubscribeRun({
+							sessionKey: childSessionKey,
+							parentSessionId: run.sessionId,
+							task: (spawnArgs?.task as string | undefined) ?? "Subagent task",
+							label: spawnArgs?.label as string | undefined,
+						});
 					}
 				}
 			}

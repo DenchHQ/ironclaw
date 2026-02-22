@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 import { listAgentIds } from "../../agents/agent-scope.js";
 import { BARE_SESSION_RESET_PROMPT } from "../../auto-reply/reply/session-reset-prompt.js";
 import { agentCommand } from "../../commands/agent.js";
@@ -52,6 +51,7 @@ import { waitForAgentJob } from "./agent-job.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
 import { sessionsHandlers } from "./sessions.js";
+import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 
 const RESET_COMMAND_RE = /^\/(new|reset)(?:\s+([\s\S]*))?$/i;
 
@@ -694,19 +694,21 @@ export const agentHandlers: GatewayRequestHandlers = {
   },
 
   "agent.subscribe": ({ params, client, respond, context }) => {
-    const validated = validateAgentSubscribeParams(params);
-    if (!validated.ok) {
+    if (!validateAgentSubscribeParams(params)) {
       respond(
         false,
         undefined,
-        errorShape(ErrorCodes.INVALID_PARAMS, formatValidationErrors(validated.errors)),
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid agent.subscribe params: ${formatValidationErrors(validateAgentSubscribeParams.errors)}`,
+        ),
       );
       return;
     }
-    const p = validated.value;
+    const p = params;
     const connId = client?.connId;
     if (!connId) {
-      respond(false, undefined, errorShape(ErrorCodes.INVALID_PARAMS, "no connection id"));
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "no connection id"));
       return;
     }
     context.registerSessionSubscription(p.sessionKey, connId);
@@ -718,21 +720,23 @@ export const agentHandlers: GatewayRequestHandlers = {
   },
 
   "agent.unsubscribe": ({ params, client, respond, context }) => {
-    const validated = validateAgentUnsubscribeParams(params);
-    if (!validated.ok) {
+    if (!validateAgentUnsubscribeParams(params)) {
       respond(
         false,
         undefined,
-        errorShape(ErrorCodes.INVALID_PARAMS, formatValidationErrors(validated.errors)),
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid agent.unsubscribe params: ${formatValidationErrors(validateAgentUnsubscribeParams.errors)}`,
+        ),
       );
       return;
     }
     const connId = client?.connId;
     if (!connId) {
-      respond(false, undefined, errorShape(ErrorCodes.INVALID_PARAMS, "no connection id"));
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "no connection id"));
       return;
     }
-    context.unregisterSessionSubscription(validated.value.sessionKey, connId);
+    context.unregisterSessionSubscription(params.sessionKey, connId);
     respond(true, {});
   },
 };

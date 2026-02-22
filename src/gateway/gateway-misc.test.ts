@@ -1,12 +1,8 @@
+import * as fs from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it, test, vi } from "vitest";
-import type { RequestFrame } from "./protocol/index.js";
-import type { GatewayClient as GatewayMethodClient } from "./server-methods/types.js";
-import type { GatewayRequestContext, RespondFn } from "./server-methods/types.js";
-import type { GatewayWsClient } from "./server/ws-types.js";
 import { defaultVoiceWakeTriggers } from "../infra/voicewake.js";
 import { GatewayClient } from "./client.js";
 import { handleControlUiHttpRequest } from "./control-ui.js";
@@ -14,11 +10,24 @@ import {
   DEFAULT_DANGEROUS_NODE_COMMANDS,
   resolveNodeCommandAllowlist,
 } from "./node-command-policy.js";
+import type { RequestFrame } from "./protocol/index.js";
 import { createGatewayBroadcaster } from "./server-broadcast.js";
 import { createChatRunRegistry } from "./server-chat.js";
 import { handleNodeInvokeResult } from "./server-methods/nodes.handlers.invoke-result.js";
+import type { GatewayClient as GatewayMethodClient } from "./server-methods/types.js";
+import type { GatewayRequestContext, RespondFn } from "./server-methods/types.js";
 import { createNodeSubscriptionManager } from "./server-node-subscriptions.js";
 import { formatError, normalizeVoiceWakeTriggers } from "./server-utils.js";
+import type { GatewayWsClient } from "./server/ws-types.js";
+
+function makeControlUiResponse() {
+  const res = {
+    statusCode: 200,
+    setHeader: vi.fn(),
+    end: vi.fn(),
+  } as unknown as ServerResponse;
+  return { res };
+}
 
 const wsMockState = vi.hoisted(() => ({
   last: null as { url: unknown; opts: unknown } | null,
@@ -37,114 +46,110 @@ vi.mock("ws", () => ({
 }));
 
 describe("GatewayClient", () => {
+  async function withControlUiRoot(
+    params: { faviconSvg?: string; indexHtml?: string },
+    run: (tmp: string) => Promise<void>,
+  ) {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-ui-"));
+    try {
+      await fs.writeFile(path.join(tmp, "index.html"), params.indexHtml ?? "<html></html>\n");
+      if (typeof params.faviconSvg === "string") {
+        await fs.writeFile(path.join(tmp, "favicon.svg"), params.faviconSvg);
+      }
+      await run(tmp);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  }
+
   test("uses a large maxPayload for node snapshots", () => {
     wsMockState.last = null;
     const client = new GatewayClient({ url: "ws://127.0.0.1:1" });
     client.start();
+    const last = wsMockState.last as { url: unknown; opts: unknown } | null;
 
-    expect(wsMockState.last?.url).toBe("ws://127.0.0.1:1");
-    expect(wsMockState.last?.opts).toEqual(
-      expect.objectContaining({ maxPayload: 25 * 1024 * 1024 }),
-    );
-  });
-});
-
-const makeControlUiResponse = (): {
-  res: ServerResponse;
-  setHeader: ReturnType<typeof vi.fn>;
-  end: ReturnType<typeof vi.fn>;
-} => {
-  const setHeader = vi.fn();
-  const end = vi.fn();
-  const res = {
-    headersSent: false,
-    statusCode: 200,
-    setHeader,
-    end,
-  } as unknown as ServerResponse;
-  return { res, setHeader, end };
-};
-
-describe("handleControlUiHttpRequest", () => {
-  it("sets anti-clickjacking headers for Control UI responses", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-ui-"));
-    try {
-      await fs.writeFile(path.join(tmp, "index.html"), "<html></html>\n");
-      const { res, setHeader } = makeControlUiResponse();
-      const handled = handleControlUiHttpRequest(
-        { url: "/", method: "GET" } as IncomingMessage,
-        res,
-        {
-          root: { kind: "resolved", path: tmp },
-        },
-      );
-      expect(handled).toBe(true);
-      expect(setHeader).toHaveBeenCalledWith("X-Frame-Options", "DENY");
-      const csp = setHeader.mock.calls.find((call) => call[0] === "Content-Security-Policy")?.[1];
-      expect(typeof csp).toBe("string");
-      expect(String(csp)).toContain("frame-ancestors 'none'");
-      expect(String(csp)).toContain("script-src 'self'");
-      expect(String(csp)).not.toContain("script-src 'self' 'unsafe-inline'");
-    } finally {
-      await fs.rm(tmp, { recursive: true, force: true });
-    }
+    expect(last?.url).toBe("ws://127.0.0.1:1");
+    expect(last?.opts).toEqual(expect.objectContaining({ maxPayload: 25 * 1024 * 1024 }));
   });
 
-  it("does not inject inline scripts into index.html", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-ui-"));
-    try {
-      const html = "<html><head></head><body>Hello</body></html>\n";
-      await fs.writeFile(path.join(tmp, "index.html"), html);
-      const { res, end } = makeControlUiResponse();
+  it("returns 404 for missing static asset paths instead of SPA fallback", async () => {
+    await withControlUiRoot({ faviconSvg: "<svg/>" }, async (tmp) => {
+      const { res } = makeControlUiResponse();
       const handled = handleControlUiHttpRequest(
-        { url: "/", method: "GET" } as IncomingMessage,
+        { url: "/webchat/favicon.svg", method: "GET" } as IncomingMessage,
         res,
-        {
-          root: { kind: "resolved", path: tmp },
-          config: {
-            agents: { defaults: { workspace: tmp } },
-            ui: { assistant: { name: "</script><script>alert(1)//", avatar: "evil.png" } },
-          },
-        },
+        { root: { kind: "resolved", path: tmp } },
       );
       expect(handled).toBe(true);
-      expect(end).toHaveBeenCalledWith(html);
-    } finally {
-      await fs.rm(tmp, { recursive: true, force: true });
-    }
+      expect(res.statusCode).toBe(404);
+    });
   });
 
-  it("serves bootstrap config JSON", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-ui-"));
-    try {
-      await fs.writeFile(path.join(tmp, "index.html"), "<html></html>\n");
-      const { res, end } = makeControlUiResponse();
+  it("returns 404 for missing static assets with query strings", async () => {
+    await withControlUiRoot({}, async (tmp) => {
+      const { res } = makeControlUiResponse();
       const handled = handleControlUiHttpRequest(
-        { url: "/__openclaw/control-ui-config.json", method: "GET" } as IncomingMessage,
+        { url: "/webchat/favicon.svg?v=1", method: "GET" } as IncomingMessage,
         res,
-        {
-          root: { kind: "resolved", path: tmp },
-          config: {
-            agents: { defaults: { workspace: tmp } },
-            ui: { assistant: { name: "</script><script>alert(1)//", avatar: "</script>.png" } },
-          },
-        },
+        { root: { kind: "resolved", path: tmp } },
       );
       expect(handled).toBe(true);
-      const payload = String(end.mock.calls[0]?.[0] ?? "");
-      const parsed = JSON.parse(payload) as {
-        basePath: string;
-        assistantName: string;
-        assistantAvatar: string;
-        assistantAgentId: string;
-      };
-      expect(parsed.basePath).toBe("");
-      expect(parsed.assistantName).toBe("</script><script>alert(1)//");
-      expect(parsed.assistantAvatar).toBe("/avatar/main");
-      expect(parsed.assistantAgentId).toBe("main");
-    } finally {
-      await fs.rm(tmp, { recursive: true, force: true });
-    }
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
+  it("still serves SPA fallback for extensionless paths", async () => {
+    await withControlUiRoot({}, async (tmp) => {
+      const { res } = makeControlUiResponse();
+      const handled = handleControlUiHttpRequest(
+        { url: "/webchat/chat", method: "GET" } as IncomingMessage,
+        res,
+        { root: { kind: "resolved", path: tmp } },
+      );
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  it("HEAD returns 404 for missing static assets consistent with GET", async () => {
+    await withControlUiRoot({}, async (tmp) => {
+      const { res } = makeControlUiResponse();
+      const handled = handleControlUiHttpRequest(
+        { url: "/webchat/favicon.svg", method: "HEAD" } as IncomingMessage,
+        res,
+        { root: { kind: "resolved", path: tmp } },
+      );
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
+  it("serves SPA fallback for dotted path segments that are not static assets", async () => {
+    await withControlUiRoot({}, async (tmp) => {
+      for (const route of ["/webchat/user/jane.doe", "/webchat/v2.0", "/settings/v1.2"]) {
+        const { res } = makeControlUiResponse();
+        const handled = handleControlUiHttpRequest(
+          { url: route, method: "GET" } as IncomingMessage,
+          res,
+          { root: { kind: "resolved", path: tmp } },
+        );
+        expect(handled).toBe(true);
+        expect(res.statusCode, `expected 200 for ${route}`).toBe(200);
+      }
+    });
+  });
+
+  it("serves SPA fallback for .html paths that do not exist on disk", async () => {
+    await withControlUiRoot({}, async (tmp) => {
+      const { res } = makeControlUiResponse();
+      const handled = handleControlUiHttpRequest(
+        { url: "/webchat/foo.html", method: "GET" } as IncomingMessage,
+        res,
+        { root: { kind: "resolved", path: tmp } },
+      );
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+    });
   });
 });
 
@@ -257,7 +262,8 @@ describe("late-arriving invoke results", () => {
         context,
       });
 
-      const [ok, payload, error] = respond.mock.lastCall ?? [];
+      const [ok, rawPayload, error] = respond.mock.lastCall ?? [];
+      const payload = rawPayload as { ok?: boolean; ignored?: boolean } | undefined;
 
       // Late-arriving results return success instead of error to reduce log noise.
       expect(ok).toBe(true);

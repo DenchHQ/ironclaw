@@ -5,7 +5,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { OpenClawConfig } from "../config/config.js";
 import {
   resolveDefaultAgentId,
   resolveAgentWorkspaceDir,
@@ -14,6 +13,10 @@ import {
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { resolveConfiguredModelRef } from "../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
+import type { OpenClawConfig } from "../config/config.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
+
+const log = createSubsystemLogger("llm-slug-generator");
 
 /**
  * Generate a short 1-2 word filename slug from session content using LLM
@@ -81,7 +84,8 @@ Reply with ONLY the slug, nothing else. Examples: "vendor-pitch", "api-design", 
 
     return null;
   } catch (err) {
-    console.error("[llm-slug-generator] Failed to generate slug:", err);
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    log.error(`Failed to generate slug: ${message}`);
     return null;
   } finally {
     // Clean up temporary session file

@@ -310,7 +310,7 @@ function AttachmentStrip({
 	files,
 	compact,
 	onRemove,
-	onClearAll,
+	onClearAll: _onClearAll,
 }: {
 	files: AttachedFile[];
 	compact?: boolean;
@@ -673,7 +673,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			onSubagentClick,
 			onFilePathClick,
 			onDeleteSession,
-			onRenameSession,
+			onRenameSession: _onRenameSession,
 		},
 		ref,
 	) {
@@ -710,7 +710,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
-		const [rawView, setRawView] = useState(false);
+		const [rawView, _setRawView] = useState(false);
 
 		const filePath = fileContext?.path ?? null;
 
@@ -1574,7 +1574,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Status label ──
 
-		const statusLabel = loadingSession
+		const _statusLabel = loadingSession
 			? "Loading session..."
 			: isReconnecting
 					? "Resuming stream..."
@@ -1742,7 +1742,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				>
 				{/* Messages */}
 				<div
-					className={`${compact ? "px-3" : "px-6"}`}
+					className={compact ? "px-3" : "px-6"}
 				>
 					{loadingSession ? (
 						<div className="flex items-center justify-center h-full min-h-[60vh]">

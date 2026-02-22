@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { execSync, exec } from "node:child_process";
 import { promisify } from "node:util";
-import { join, resolve, normalize, relative, basename } from "node:path";
+import { join, resolve, normalize, relative } from "node:path";
 import { homedir } from "node:os";
 import YAML from "yaml";
 import type { SavedView } from "./object-filters";

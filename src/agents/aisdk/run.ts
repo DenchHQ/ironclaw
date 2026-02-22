@@ -9,10 +9,9 @@
  */
 
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
+import { resolveUserPath } from "../../utils.js";
 import type { RunEmbeddedPiAgentParams } from "../pi-embedded-runner/run/params.js";
 import type { EmbeddedPiRunResult, EmbeddedPiAgentMeta } from "../pi-embedded-runner/types.js";
-import type { AiSdkConfig, ResolvedModel } from "./types.js";
-import { resolveUserPath } from "../../utils.js";
 import {
   resolveSkillsPromptForRun,
   applySkillEnvOverrides,
@@ -22,6 +21,7 @@ import {
 import { streamWithPiAgentEvents, type EventAdapterInput } from "./event-adapter.js";
 import { resolveModel, getDefaultConfig, validateConfig } from "./provider.js";
 import { createAiSdkTools, type ToolExecutionContext, type ConvertedAiSdkTool } from "./tools.js";
+import type { AiSdkConfig, ResolvedModel } from "./types.js";
 
 /**
  * Configuration for the AI SDK agent runner.

@@ -3,6 +3,7 @@ import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { theme } from "../terminal/theme.js";
 import { replaceCliName, resolveCliName } from "./cli-name.js";
+import { inheritOptionFromParent } from "./command-options.js";
 import { formatHelpExamples } from "./help-format.js";
 import { updateStatusCommand } from "./update-cli/status.js";
 import { updateCommand } from "./update-cli/update-command.js";
@@ -18,10 +19,25 @@ export { updateCommand, updateStatusCommand, updateWizardCommand };
 
 const CLI_NAME = resolveCliName();
 
+function inheritedUpdateJson(command?: Command): boolean {
+  return Boolean(inheritOptionFromParent<boolean>(command, "json"));
+}
+
+function inheritedUpdateTimeout(
+  opts: { timeout?: unknown },
+  command?: Command,
+): string | undefined {
+  const timeout = opts.timeout as string | undefined;
+  if (timeout) {
+    return timeout;
+  }
+  return inheritOptionFromParent<string>(command, "timeout");
+}
+
 export function registerUpdateCli(program: Command) {
   const update = program
     .command("update")
-    .description("Update OpenClaw to the latest version")
+    .description("Update OpenClaw and inspect update channel status")
     .option("--json", "Output result as JSON", false)
     .option("--no-restart", "Skip restarting the gateway service after a successful update")
     .option("--channel <stable|beta|dev>", "Persist update channel (git + npm)")
@@ -95,10 +111,10 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/up
       "after",
       `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/update")}\n`,
     )
-    .action(async (opts) => {
+    .action(async (opts, command) => {
       try {
         await updateWizardCommand({
-          timeout: opts.timeout as string | undefined,
+          timeout: inheritedUpdateTimeout(opts, command),
         });
       } catch (err) {
         defaultRuntime.error(String(err));
@@ -124,11 +140,11 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/up
           "Docs:",
         )} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/update")}`,
     )
-    .action(async (opts) => {
+    .action(async (opts, command) => {
       try {
         await updateStatusCommand({
-          json: Boolean(opts.json),
-          timeout: opts.timeout as string | undefined,
+          json: Boolean(opts.json) || inheritedUpdateJson(command),
+          timeout: inheritedUpdateTimeout(opts, command),
         });
       } catch (err) {
         defaultRuntime.error(String(err));

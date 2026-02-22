@@ -16,11 +16,8 @@ vi.mock("../infra/dotenv.js", () => ({
 }));
 
 vi.mock("../infra/env.js", async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    normalizeEnv: normalizeEnvMock,
-  };
+  const actual = await importOriginal<typeof import("../infra/env.js")>();
+  return Object.assign({}, actual, { normalizeEnv: normalizeEnvMock });
 });
 
 vi.mock("../infra/path-env.js", () => ({

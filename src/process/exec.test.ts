@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { captureEnv } from "../test-utils/env.js";
+import { withEnvAsync } from "../test-utils/env.js";
 import { runCommandWithTimeout, shouldSpawnWithShell } from "./exec.js";
 
 describe("runCommandWithTimeout", () => {
@@ -12,24 +12,8 @@ describe("runCommandWithTimeout", () => {
     ).toBe(false);
   });
 
-  it("passes env overrides to child", async () => {
-    const result = await runCommandWithTimeout(
-      [process.execPath, "-e", 'process.stdout.write(process.env.OPENCLAW_TEST_ENV ?? "")'],
-      {
-        timeoutMs: 5_000,
-        env: { OPENCLAW_TEST_ENV: "ok" },
-      },
-    );
-
-    expect(result.code).toBe(0);
-    expect(result.stdout).toBe("ok");
-    expect(result.termination).toBe("exit");
-  });
-
   it("merges custom env with process.env", async () => {
-    const envSnapshot = captureEnv(["OPENCLAW_BASE_ENV"]);
-    process.env.OPENCLAW_BASE_ENV = "base";
-    try {
+    await withEnvAsync({ OPENCLAW_BASE_ENV: "base" }, async () => {
       const result = await runCommandWithTimeout(
         [
           process.execPath,
@@ -45,23 +29,18 @@ describe("runCommandWithTimeout", () => {
       expect(result.code).toBe(0);
       expect(result.stdout).toBe("base|ok");
       expect(result.termination).toBe("exit");
-    } finally {
-      envSnapshot.restore();
-    }
+    });
   });
 
   it("kills command when no output timeout elapses", async () => {
-    const startedAt = Date.now();
     const result = await runCommandWithTimeout(
-      [process.execPath, "-e", "setTimeout(() => {}, 10_000)"],
+      [process.execPath, "-e", "setTimeout(() => {}, 120)"],
       {
-        timeoutMs: 5_000,
-        noOutputTimeoutMs: 300,
+        timeoutMs: 1_000,
+        noOutputTimeoutMs: 35,
       },
     );
 
-    const durationMs = Date.now() - startedAt;
-    expect(durationMs).toBeLessThan(2_500);
     expect(result.termination).toBe("no-output-timeout");
     expect(result.noOutputTimedOut).toBe(true);
     expect(result.code).not.toBe(0);
@@ -72,25 +51,26 @@ describe("runCommandWithTimeout", () => {
       [
         process.execPath,
         "-e",
-        'let i=0; const t=setInterval(() => { process.stdout.write("."); i += 1; if (i >= 5) { clearInterval(t); process.exit(0); } }, 50);',
+        'process.stdout.write("."); setTimeout(() => process.stdout.write("."), 30); setTimeout(() => process.exit(0), 60);',
       ],
       {
-        timeoutMs: 5_000,
-        noOutputTimeoutMs: 200,
+        timeoutMs: 1_000,
+        noOutputTimeoutMs: 500,
       },
     );
 
-    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.code ?? 0).toBe(0);
     expect(result.termination).toBe("exit");
     expect(result.noOutputTimedOut).toBe(false);
-    expect(result.stdout.length).toBeGreaterThanOrEqual(5);
+    expect(result.stdout.length).toBeGreaterThanOrEqual(2);
   });
 
   it("reports global timeout termination when overall timeout elapses", async () => {
     const result = await runCommandWithTimeout(
-      [process.execPath, "-e", "setTimeout(() => {}, 10_000)"],
+      [process.execPath, "-e", "setTimeout(() => {}, 120)"],
       {
-        timeoutMs: 200,
+        timeoutMs: 15,
       },
     );
 

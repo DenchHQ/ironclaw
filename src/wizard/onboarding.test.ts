@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { RuntimeEnv } from "../runtime.js";
-import type { WizardPrompter } from "./prompts.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../agents/workspace.js";
+import type { RuntimeEnv } from "../runtime.js";
 import { runOnboardingWizard } from "./onboarding.js";
+import type { WizardPrompter, WizardSelectParams } from "./prompts.js";
 
 const ensureAuthProfileStore = vi.hoisted(() => vi.fn(() => ({ profiles: {} })));
 const promptAuthChoiceGrouped = vi.hoisted(() => vi.fn(async () => "skip"));
@@ -48,7 +48,18 @@ const healthCommand = vi.hoisted(() => vi.fn(async () => {}));
 const ensureWorkspaceAndSessions = vi.hoisted(() => vi.fn(async () => {}));
 const writeConfigFile = vi.hoisted(() => vi.fn(async () => {}));
 const readConfigFileSnapshot = vi.hoisted(() =>
-  vi.fn(async () => ({ exists: false, valid: true, config: {} })),
+  vi.fn(async () => ({
+    path: "/tmp/.openclaw/openclaw.json",
+    exists: false,
+    raw: null as string | null,
+    parsed: {},
+    resolved: {},
+    valid: true,
+    config: {},
+    issues: [] as Array<{ path: string; message: string }>,
+    warnings: [] as Array<{ path: string; message: string }>,
+    legacyIssues: [] as Array<{ path: string; message: string }>,
+  })),
 );
 const ensureSystemdUserLingerInteractive = vi.hoisted(() => vi.fn(async () => {}));
 const isSystemdUserServiceAvailable = vi.hoisted(() => vi.fn(async () => true));
@@ -170,11 +181,14 @@ vi.mock("./onboarding.completion.js", () => ({
 }));
 
 function createWizardPrompter(overrides?: Partial<WizardPrompter>): WizardPrompter {
+  const select = vi.fn(
+    async (_params: WizardSelectParams<unknown>) => "quickstart",
+  ) as unknown as WizardPrompter["select"];
   return {
     intro: vi.fn(async () => {}),
     outro: vi.fn(async () => {}),
     note: vi.fn(async () => {}),
-    select: vi.fn(async () => "quickstart"),
+    select,
     multiselect: vi.fn(async () => []),
     text: vi.fn(async () => ""),
     confirm: vi.fn(async () => false),
@@ -227,13 +241,17 @@ describe("runOnboardingWizard", () => {
       exists: true,
       raw: "{}",
       parsed: {},
+      resolved: {},
       valid: false,
       config: {},
       issues: [{ path: "routing.allowFrom", message: "Legacy key" }],
+      warnings: [],
       legacyIssues: [{ path: "routing.allowFrom", message: "Legacy key" }],
     });
 
-    const select: WizardPrompter["select"] = vi.fn(async () => "quickstart");
+    const select = vi.fn(
+      async (_params: WizardSelectParams<unknown>) => "quickstart",
+    ) as unknown as WizardPrompter["select"];
     const prompter = createWizardPrompter({ select });
     const runtime = createRuntime({ throwsOnExit: true });
 
@@ -259,7 +277,9 @@ describe("runOnboardingWizard", () => {
   });
 
   it("skips prompts and setup steps when flags are set", async () => {
-    const select: WizardPrompter["select"] = vi.fn(async () => "quickstart");
+    const select = vi.fn(
+      async (_params: WizardSelectParams<unknown>) => "quickstart",
+    ) as unknown as WizardPrompter["select"];
     const multiselect: WizardPrompter["multiselect"] = vi.fn(async () => []);
     const prompter = createWizardPrompter({ select, multiselect });
     const runtime = createRuntime({ throwsOnExit: true });

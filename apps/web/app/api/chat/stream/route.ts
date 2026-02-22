@@ -1,25 +1,19 @@
 /**
- * GET /api/chat/stream?sessionId=xxx
+ * GET /api/chat/stream?sessionId=xxx  (parent sessions)
+ * GET /api/chat/stream?sessionKey=xxx (subagent sessions)
  *
  * Reconnect to an active (or recently-completed) agent run.
  * Replays all buffered SSE events from the start of the run, then
  * streams live events until the run finishes.
  *
- * Returns 404 if no run exists for the given session.
+ * Both parent and subagent sessions use the same ActiveRun system.
  */
 import {
 	getActiveRun,
+	startSubscribeRun,
 	subscribeToRun,
-	type SseEvent as ParentSseEvent,
+	type SseEvent,
 } from "@/lib/active-runs";
-import {
-	subscribeToSubagent,
-	hasActiveSubagent,
-	isSubagentRunning,
-	ensureRegisteredFromDisk,
-	ensureSubagentStreamable,
-	type SseEvent as SubagentSseEvent,
-} from "@/lib/subagent-runs";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
@@ -27,9 +21,9 @@ import { resolveOpenClawStateDir } from "@/lib/workspace";
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-function deriveSubagentParentSessionId(sessionKey: string): string {
+function deriveSubagentInfo(sessionKey: string): { parentSessionId: string; task: string } | null {
 	const registryPath = join(resolveOpenClawStateDir(), "subagents", "runs.json");
-	if (!existsSync(registryPath)) {return "";}
+	if (!existsSync(registryPath)) {return null;}
 	try {
 		const raw = JSON.parse(readFileSync(registryPath, "utf-8")) as {
 			runs?: Record<string, Record<string, unknown>>;
@@ -38,12 +32,14 @@ function deriveSubagentParentSessionId(sessionKey: string): string {
 			if (entry.childSessionKey !== sessionKey) {continue;}
 			const requester = typeof entry.requesterSessionKey === "string" ? entry.requesterSessionKey : "";
 			const match = requester.match(/^agent:[^:]+:web:(.+)$/);
-			return match?.[1] ?? "";
+			const parentSessionId = match?.[1] ?? "";
+			const task = typeof entry.task === "string" ? entry.task : "";
+			return { parentSessionId, task };
 		}
 	} catch {
 		// ignore
 	}
-	return "";
+	return null;
 }
 
 export async function GET(req: Request) {
@@ -56,66 +52,21 @@ export async function GET(req: Request) {
 		return new Response("sessionId or subagent sessionKey required", { status: 400 });
 	}
 
-	if (isSubagentSession && sessionKey) {
-		if (!hasActiveSubagent(sessionKey)) {
-			const parentWebSessionId = deriveSubagentParentSessionId(sessionKey);
-			const registered = ensureRegisteredFromDisk(sessionKey, parentWebSessionId);
-			if (!registered && !hasActiveSubagent(sessionKey)) {
-				return Response.json({ active: false }, { status: 404 });
-			}
+	const runKey = isSubagentSession && sessionKey ? sessionKey : (sessionId as string);
+
+	let run = getActiveRun(runKey);
+
+	if (!run && isSubagentSession && sessionKey) {
+		const info = deriveSubagentInfo(sessionKey);
+		if (info) {
+			run = startSubscribeRun({
+				sessionKey,
+				parentSessionId: info.parentSessionId,
+				task: info.task,
+			});
 		}
-		ensureSubagentStreamable(sessionKey);
-		const isActive = isSubagentRunning(sessionKey);
-		const encoder = new TextEncoder();
-		let closed = false;
-		let unsubscribe: (() => void) | null = null;
-
-		const stream = new ReadableStream({
-			start(controller) {
-				unsubscribe = subscribeToSubagent(
-					sessionKey,
-					(event: SubagentSseEvent | null) => {
-						if (closed) {return;}
-						if (event === null) {
-							closed = true;
-							try {
-								controller.close();
-							} catch {
-								/* already closed */
-							}
-							return;
-						}
-						try {
-							const json = JSON.stringify(event);
-							controller.enqueue(encoder.encode(`data: ${json}\n\n`));
-						} catch {
-							/* ignore enqueue errors on closed stream */
-						}
-					},
-					{ replay: true },
-				);
-
-				if (!unsubscribe) {
-					closed = true;
-					controller.close();
-				}
-			},
-			cancel() {
-				closed = true;
-				unsubscribe?.();
-			},
-		});
-
-		return new Response(stream, {
-			headers: {
-				"Content-Type": "text/event-stream",
-				"Cache-Control": "no-cache, no-transform",
-				Connection: "keep-alive",
-				"X-Run-Active": isActive ? "true" : "false",
-			},
-		});
 	}
-	const run = getActiveRun(sessionId as string);
+
 	if (!run) {
 		return Response.json({ active: false }, { status: 404 });
 	}
@@ -127,7 +78,6 @@ export async function GET(req: Request) {
 
 	const stream = new ReadableStream({
 		start(controller) {
-			// Keep idle SSE connections alive while waiting for subagent announcements.
 			keepalive = setInterval(() => {
 				if (closed) {return;}
 				try {
@@ -137,14 +87,11 @@ export async function GET(req: Request) {
 				}
 			}, 15_000);
 
-			// subscribeToRun with replay=true replays the full event buffer
-			// synchronously, then subscribes for live events.
 			unsubscribe = subscribeToRun(
-				sessionId as string,
-				(event: ParentSseEvent | null) => {
+				runKey,
+				(event: SseEvent | null) => {
 					if (closed) {return;}
 					if (event === null) {
-						// Run completed — close the SSE stream.
 						closed = true;
 						if (keepalive) {
 							clearInterval(keepalive);
@@ -159,9 +106,7 @@ export async function GET(req: Request) {
 					}
 					try {
 						const json = JSON.stringify(event);
-						controller.enqueue(
-							encoder.encode(`data: ${json}\n\n`),
-						);
+						controller.enqueue(encoder.encode(`data: ${json}\n\n`));
 					} catch {
 						/* ignore enqueue errors on closed stream */
 					}
@@ -170,7 +115,6 @@ export async function GET(req: Request) {
 			);
 
 			if (!unsubscribe) {
-				// Run was cleaned up between getActiveRun and subscribe.
 				closed = true;
 				if (keepalive) {
 					clearInterval(keepalive);
@@ -180,7 +124,6 @@ export async function GET(req: Request) {
 			}
 		},
 		cancel() {
-			// Client disconnected — unsubscribe only (don't kill the run).
 			closed = true;
 			if (keepalive) {
 				clearInterval(keepalive);

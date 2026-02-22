@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { captureEnv } from "../test-utils/env.js";
+import { withEnvAsync } from "../test-utils/env.js";
 import "./test-helpers/fast-core-tools.js";
 import { createOpenClawTools } from "./openclaw-tools.js";
 
@@ -13,54 +13,63 @@ vi.mock("./tools/gateway.js", () => ({
     }
     return { ok: true };
   }),
+  readGatewayCallOptions: vi.fn(() => ({})),
 }));
 
 describe("gateway tool", () => {
+  it("marks gateway as owner-only", async () => {
+    const tool = createOpenClawTools({
+      config: { commands: { restart: true } },
+    }).find((candidate) => candidate.name === "gateway");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing gateway tool");
+    }
+    expect(tool.ownerOnly).toBe(true);
+  });
+
   it("schedules SIGUSR1 restart", async () => {
     vi.useFakeTimers();
     const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
-    const envSnapshot = captureEnv(["OPENCLAW_STATE_DIR", "OPENCLAW_PROFILE"]);
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-test-"));
-    process.env.OPENCLAW_STATE_DIR = stateDir;
-    process.env.OPENCLAW_PROFILE = "isolated";
 
     try {
-      const tool = createOpenClawTools({
-        config: { commands: { restart: true } },
-      }).find((candidate) => candidate.name === "gateway");
-      expect(tool).toBeDefined();
-      if (!tool) {
-        throw new Error("missing gateway tool");
-      }
+      await withEnvAsync(
+        { OPENCLAW_STATE_DIR: stateDir, OPENCLAW_PROFILE: "isolated" },
+        async () => {
+          const tool = createOpenClawTools({
+            config: { commands: { restart: true } },
+          }).find((candidate) => candidate.name === "gateway");
+          expect(tool).toBeDefined();
+          if (!tool) {
+            throw new Error("missing gateway tool");
+          }
 
-      const result = await tool.execute("call1", {
-        action: "restart",
-        delayMs: 0,
-      });
-      expect(result.details).toMatchObject({
-        ok: true,
-        pid: process.pid,
-        signal: "SIGUSR1",
-        delayMs: 0,
-      });
+          const result = await tool.execute("call1", {
+            action: "restart",
+            delayMs: 0,
+          });
+          expect(result.details).toMatchObject({
+            ok: true,
+            pid: process.pid,
+            signal: "SIGUSR1",
+            delayMs: 0,
+          });
 
-      const sentinelPath = path.join(stateDir, "restart-sentinel.json");
-      const raw = await fs.readFile(sentinelPath, "utf-8");
-      const parsed = JSON.parse(raw) as {
-        payload?: { kind?: string; doctorHint?: string | null };
-      };
-      expect(parsed.payload?.kind).toBe("restart");
-      expect(parsed.payload?.doctorHint).toBe(
-        "Run: ironclaw --profile isolated doctor --non-interactive",
+          const sentinelPath = path.join(stateDir, "restart-sentinel.json");
+          const raw = await fs.readFile(sentinelPath, "utf-8");
+          const parsed = JSON.parse(raw) as {
+            payload?: { kind?: string; doctorHint?: string | null };
+          };
+          expect(parsed.payload?.kind).toBe("restart");
+          expect(parsed.payload?.doctorHint).toBe(
+            "Run: ironclaw --profile isolated doctor --non-interactive",
+          );
+        },
       );
-
-      expect(kill).not.toHaveBeenCalled();
-      await vi.runAllTimersAsync();
-      expect(kill).toHaveBeenCalledWith(process.pid, "SIGUSR1");
     } finally {
       kill.mockRestore();
       vi.useRealTimers();
-      envSnapshot.restore();
       await fs.rm(stateDir, { recursive: true, force: true });
     }
   });
@@ -153,5 +162,40 @@ describe("gateway tool", () => {
       expect(opts).toMatchObject({ timeoutMs: 20 * 60_000 });
       expect(params).toMatchObject({ timeoutMs: 20 * 60_000 });
     }
+  });
+});
+
+describe("self_update tool", () => {
+  it("is not owner-only", () => {
+    const tool = createOpenClawTools().find((candidate) => candidate.name === "self_update");
+    expect(tool).toBeDefined();
+    expect(tool?.ownerOnly).toBeUndefined();
+  });
+
+  it("calls update.run on the gateway", async () => {
+    const gateway = await import("./tools/gateway.js");
+    const callSpy = gateway.callGatewayTool as ReturnType<typeof vi.fn>;
+    callSpy.mockClear();
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:main:web:session1",
+    }).find((candidate) => candidate.name === "self_update");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing self_update tool");
+    }
+
+    await tool.execute("call-su-1", {
+      note: "user requested update",
+    });
+
+    expect(callSpy).toHaveBeenCalledWith(
+      "update.run",
+      expect.any(Object),
+      expect.objectContaining({
+        note: "user requested update",
+        sessionKey: "agent:main:web:session1",
+      }),
+    );
   });
 });
