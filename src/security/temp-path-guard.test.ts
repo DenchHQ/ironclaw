@@ -10,7 +10,7 @@ const SKIP_PATTERNS = [
   /\.e2e\.tsx?$/,
   /\.d\.ts$/,
   /[\\/](?:__tests__|tests)[\\/]/,
-  /[\\/]test-helpers(?:\.[^\\/]+)?\.ts$/,
+  /[\\/][^/\\]*test-helpers(?:\.[^\\/]+)?\.ts$/,
 ];
 
 function shouldSkip(relativePath: string): boolean {
