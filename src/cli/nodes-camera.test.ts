@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cameraTempPath,
   parseCameraClipPayload,
@@ -26,6 +26,12 @@ async function withCameraTempDir<T>(run: (dir: string) => Promise<T>): Promise<T
 }
 
 describe("nodes camera helpers", () => {
+  const originalArgv = [...process.argv];
+
+  beforeEach(() => {
+    process.argv = ["node", "ironclaw"];
+  });
+
   function stubFetchResponse(response: Response) {
     vi.stubGlobal(
       "fetch",
@@ -96,7 +102,7 @@ describe("nodes camera helpers", () => {
         tmpDir: dir,
         id: "clip1",
       });
-      expect(out).toBe(path.join(dir, "openclaw-camera-clip-front-clip1.mp4"));
+      expect(out).toBe(path.join(dir, "ironclaw-camera-clip-front-clip1.mp4"));
       await expect(fs.readFile(out, "utf8")).resolves.toBe("hi");
     });
   });
@@ -115,7 +121,7 @@ describe("nodes camera helpers", () => {
         tmpDir: dir,
         id: "clip2",
       });
-      expect(out).toBe(path.join(dir, "openclaw-camera-clip-back-clip2.mp4"));
+      expect(out).toBe(path.join(dir, "ironclaw-camera-clip-back-clip2.mp4"));
       await expect(fs.readFile(out, "utf8")).resolves.toBe("url-clip");
     });
   });
@@ -129,6 +135,7 @@ describe("nodes camera helpers", () => {
   });
 
   afterEach(() => {
+    process.argv = [...originalArgv];
     vi.unstubAllGlobals();
   });
 

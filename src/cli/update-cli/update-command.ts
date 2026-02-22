@@ -51,7 +51,6 @@ import {
   ensureGitCheckout,
   normalizeTag,
   parseTimeoutMsOrExit,
-  readPackageName,
   readPackageVersion,
   resolveGitInstallDir,
   resolveGlobalManager,
@@ -212,9 +211,8 @@ async function runPackageInstallUpdate(params: {
   const runCommand = createGlobalCommandRunner();
 
   const pkgRoot = await resolveGlobalPackageRoot(manager, runCommand, params.timeoutMs);
-  const packageName =
-    (pkgRoot ? await readPackageName(pkgRoot) : await readPackageName(params.root)) ??
-    DEFAULT_PACKAGE_NAME;
+  // Always install the canonical package name regardless of what's on disk
+  const packageName = DEFAULT_PACKAGE_NAME;
 
   const beforeVersion = pkgRoot ? await readPackageVersion(pkgRoot) : null;
   if (pkgRoot) {
@@ -747,7 +745,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       );
       defaultRuntime.log(
         theme.muted(
-          `Examples: \`${replaceCliName("npm i -g openclaw@latest", CLI_NAME)}\` or \`${replaceCliName("pnpm add -g openclaw@latest", CLI_NAME)}\``,
+          `Examples: \`npm i -g ${DEFAULT_PACKAGE_NAME}@latest\` or \`pnpm add -g ${DEFAULT_PACKAGE_NAME}@latest\``,
         ),
       );
     }
