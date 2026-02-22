@@ -220,8 +220,13 @@ export function ChatSessionsSidebar({
 		return map;
 	}, [subagents]);
 
+	const filteredSessions = useMemo(
+		() => sessions.filter((s) => !s.id.includes(":subagent:")),
+		[sessions],
+	);
+
 	// Group sessions: today, yesterday, this week, this month, older
-	const grouped = groupSessions(sessions);
+	const grouped = groupSessions(filteredSessions);
 
 	const width = mobile ? "280px" : (widthProp ?? 260);
 	const headerHeight = 40; // px — match padding so list content clears the overlay

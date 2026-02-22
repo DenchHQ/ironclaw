@@ -1557,12 +1557,17 @@ function upsertMessage(
 
 	if (!found) {
 		updated.push(JSON.stringify(message));
-		updateIndex(sessionId, { incrementCount: 1 });
-	} else {
-		updateIndex(sessionId, {});
 	}
 
 	writeFileSync(fp, updated.join("\n") + "\n");
+
+	if (!sessionId.includes(":subagent:")) {
+		if (!found) {
+			updateIndex(sessionId, { incrementCount: 1 });
+		} else {
+			updateIndex(sessionId, {});
+		}
+	}
 }
 
 function cleanupRun(sessionId: string) {
