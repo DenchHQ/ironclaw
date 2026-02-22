@@ -211,7 +211,7 @@ function buildIronclawSection(isMinimal: boolean, workspaceDir?: string) {
     "- **Web UI**: Next.js app that usually runs at `localhost:3100` — chat panel, workspace sidebar, object tables, kanban boards, report cards, document editor, media viewer.",
     "- **DuckDB workspace**: all structured data (objects, fields, entries, relations) in a local DuckDB database with EAV pattern and auto-generated PIVOT views (`v_<object>`).",
     "- **Skills platform**: extend capabilities via `SKILL.md` files — browse at [skills.sh](https://skills.sh) and [ClawHub](https://clawhub.com).",
-    `- **Past Web Sessions**: Your past Ironclaw web chat sessions are stored in: ${webChatPath} (or near wherever you store your workspace)`,
+    `- **Past Web Sessions**: Your past Ironclaw web chat sessions are stored in: ${webChatPath} (or near wherever you store your workspace). Each session is a \`.jsonl\` file. The sidebar reads from \`index.json\` in the same directory — this index controls what appears in the UI. When modifying chats (renaming, deleting, reordering), update \`index.json\` accordingly. To delete all chats, remove the \`.jsonl\` files AND reset \`index.json\` to \`[]\`.`,
     "",
     "### Links",
     "- Website: https://ironclaw.sh",
