@@ -31,6 +31,7 @@ import {
 } from "./agent-runner";
 import {
 	hasRunningSubagentsForParent,
+	registerSubagent,
 } from "./subagent-runs";
 
 // ── Types ──
@@ -592,7 +593,12 @@ function wireChildProcess(run: ActiveRun): void {
 				typeof ev.data?.delta === "string"
 					? ev.data.delta
 					: undefined;
-			if (delta) {
+			const textFallback =
+				!delta && typeof ev.data?.text === "string"
+					? ev.data.text
+					: undefined;
+			const chunk = delta ?? textFallback;
+			if (chunk) {
 				closeReasoning();
 				if (!textStarted) {
 					currentTextId = nextId("text");
@@ -600,8 +606,8 @@ function wireChildProcess(run: ActiveRun): void {
 					textStarted = true;
 				}
 				everSentText = true;
-				emit({ type: "text-delta", id: currentTextId, delta });
-				accAppendText(delta);
+				emit({ type: "text-delta", id: currentTextId, delta: chunk });
+				accAppendText(chunk);
 			}
 			// Media URLs
 			const mediaUrls = ev.data?.mediaUrls;
@@ -707,6 +713,25 @@ function wireChildProcess(run: ActiveRun): void {
 						if (part.type === "tool-invocation") {
 							part.result = output;
 						}
+					}
+				}
+
+				if (toolName === "sessions_spawn" && !isError) {
+					const childSessionKey =
+						result?.details?.sessionKey as string | undefined;
+					const childRunId =
+						result?.details?.runId as string | undefined;
+					const spawnTask =
+						result?.details?.task as string | undefined;
+					const spawnLabel =
+						result?.details?.label as string | undefined;
+					if (childSessionKey && childRunId) {
+						registerSubagent(run.sessionId, {
+							sessionKey: childSessionKey,
+							runId: childRunId,
+							task: spawnTask ?? "Subagent task",
+							label: spawnLabel,
+						});
 					}
 				}
 			}

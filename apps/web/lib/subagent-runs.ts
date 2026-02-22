@@ -45,6 +45,10 @@ type SubagentRun = SubagentInfo & {
 	_state: TransformState;
 	_subscribeProcess: ChildProcess | null;
 	_cleanupTimer: ReturnType<typeof setTimeout> | null;
+	/** Set when lifecycle/end is received; actual finalization deferred to subscribe close. */
+	_lifecycleEnded: boolean;
+	/** Safety timer to finalize if subscribe process hangs after lifecycle/end. */
+	_finalizeTimer: ReturnType<typeof setTimeout> | null;
 	/** Last globalSeq seen from the gateway event stream for replay cursor. */
 	lastGlobalSeq: number;
 };
@@ -233,6 +237,8 @@ export function registerSubagent(
 		_state: createTransformState(),
 		_subscribeProcess: null,
 		_cleanupTimer: null,
+		_lifecycleEnded: false,
+		_finalizeTimer: null,
 		lastGlobalSeq: 0,
 	};
 
@@ -357,19 +363,49 @@ export function isSubagentRunning(sessionKey: string): boolean {
 export function hasRunningSubagentsForParent(parentWebSessionId: string): boolean {
 	const reg = getRegistry();
 	const keys = reg.parentIndex.get(parentWebSessionId);
-	if (!keys) {return false;}
-	let anyRunning = false;
-	for (const key of keys) {
-		const run = reg.runs.get(key);
-		if (run?.status !== "running") {continue;}
-		const diskStatus = readDiskStatus(key);
-		if (diskStatus !== "running") {
-			finalizeRun(run, diskStatus === "error" ? "error" : "completed");
-			continue;
+
+	if (keys && keys.size > 0) {
+		let anyRunning = false;
+		for (const key of keys) {
+			const run = reg.runs.get(key);
+			if (run?.status !== "running") {continue;}
+			const diskStatus = readDiskStatus(key);
+			if (diskStatus !== "running") {
+				finalizeRun(run, diskStatus === "error" ? "error" : "completed");
+				continue;
+			}
+			anyRunning = true;
 		}
-		anyRunning = true;
+		if (anyRunning) {return true;}
 	}
-	return anyRunning;
+
+	// Fallback: check the gateway disk registry for running subagents
+	// that may not have been registered in-memory yet.
+	return checkDiskRegistryForRunningSubagents(parentWebSessionId);
+}
+
+function checkDiskRegistryForRunningSubagents(parentWebSessionId: string): boolean {
+	const registryPath = join(resolveOpenClawStateDir(), "subagents", "runs.json");
+	if (!existsSync(registryPath)) {return false;}
+	try {
+		const raw = JSON.parse(readFileSync(registryPath, "utf-8")) as {
+			runs?: Record<string, Record<string, unknown>>;
+		};
+		const runs = raw?.runs;
+		if (!runs) {return false;}
+		const parentKeyPattern = `:web:${parentWebSessionId}`;
+		for (const entry of Object.values(runs)) {
+			const requester = typeof entry.requesterSessionKey === "string"
+				? entry.requesterSessionKey
+				: "";
+			if (!requester.endsWith(parentKeyPattern)) {continue;}
+			if (typeof entry.endedAt === "number") {continue;}
+			return true;
+		}
+	} catch {
+		// ignore read errors
+	}
+	return false;
 }
 
 /** Return session keys of all currently running subagents. */
@@ -657,7 +693,10 @@ function handleAgentEvent(run: SubagentRun, evt: AgentEvent): void {
 	// Assistant text
 	if (stream === "assistant") {
 		const delta = typeof data.delta === "string" ? data.delta : undefined;
-		if (delta) {
+		const textFallback =
+			!delta && typeof data.text === "string" ? data.text : undefined;
+		const chunk = delta ?? textFallback;
+		if (chunk) {
 			closeReasoning();
 			if (!st.textStarted) {
 				st.currentTextId = nextId("text");
@@ -665,7 +704,7 @@ function handleAgentEvent(run: SubagentRun, evt: AgentEvent): void {
 				st.textStarted = true;
 			}
 			st.everSentText = true;
-			emit({ type: "text-delta", id: st.currentTextId, delta });
+			emit({ type: "text-delta", id: st.currentTextId, delta: chunk });
 		}
 		// Inline error
 		if (
@@ -728,11 +767,19 @@ function handleAgentEvent(run: SubagentRun, evt: AgentEvent): void {
 		}
 	}
 
-	// Lifecycle end → mark run completed
+	// Lifecycle end → defer finalization until subscribe process closes
+	// so any remaining events in the readline buffer are still delivered.
 	if (stream === "lifecycle" && data.phase === "end") {
 		closeReasoning();
 		closeText();
-		finalizeRun(run, "completed");
+		run._lifecycleEnded = true;
+		if (run._finalizeTimer) {clearTimeout(run._finalizeTimer);}
+		run._finalizeTimer = setTimeout(() => {
+			run._finalizeTimer = null;
+			if (run.status === "running") {
+				finalizeRun(run, "completed");
+			}
+		}, 5_000);
 	}
 
 	// Lifecycle error
@@ -745,6 +792,11 @@ function handleAgentEvent(run: SubagentRun, evt: AgentEvent): void {
 
 function finalizeRun(run: SubagentRun, status: "completed" | "error"): void {
 	if (run.status !== "running") {return;}
+
+	if (run._finalizeTimer) {
+		clearTimeout(run._finalizeTimer);
+		run._finalizeTimer = null;
+	}
 
 	run.status = status;
 	run.endedAt = Date.now();
@@ -821,6 +873,14 @@ function startSubagentSubscribeStream(run: SubagentRun): void {
 			run._subscribeProcess = null;
 		}
 		if (run.status !== "running") {return;}
+		if (run._lifecycleEnded) {
+			if (run._finalizeTimer) {
+				clearTimeout(run._finalizeTimer);
+				run._finalizeTimer = null;
+			}
+			finalizeRun(run, "completed");
+			return;
+		}
 		setTimeout(() => {
 			if (run.status === "running" && !run._subscribeProcess) {
 				startSubagentSubscribeStream(run);

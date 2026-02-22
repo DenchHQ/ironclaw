@@ -43,7 +43,13 @@ if [ "${#lint_files[@]}" -gt 0 ]; then
 fi
 
 if [ "${#format_files[@]}" -gt 0 ]; then
-  "$RUN_NODE_TOOL" oxfmt --write -- "${format_files[@]}"
+  "$RUN_NODE_TOOL" oxfmt --write -- "${format_files[@]}" || {
+    rc=$?
+    # oxfmt exits 2 when all target files are in ignorePatterns; treat as success.
+    if [ $rc -ne 2 ]; then
+      exit $rc
+    fi
+  }
 fi
 
 git add -- "${files[@]}"
