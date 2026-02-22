@@ -59,4 +59,5 @@ jobs:
           echo "OPENCLAW_TEST_MAX_OLD_SPACE_SIZE_MB=8192" >> "$GITHUB_ENV"
 
       - name: Run tests (${{ matrix.runtime }})
+        if: github.event_name != 'push' || matrix.runtime != 'bun'
         run: ${{ matrix.command }}
