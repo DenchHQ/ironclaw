@@ -13,6 +13,10 @@ vi.mock("chokidar", () => {
   };
 });
 
+vi.mock("./bundled-dir.js", () => ({
+  resolveBundledSkillsDir: () => "/mock/package/root/skills",
+}));
+
 describe("ensureSkillsWatcher", () => {
   it("ignores node_modules, dist, .git, and Python venvs by default", async () => {
     const mod = await import("./refresh.js");
@@ -69,5 +73,19 @@ describe("ensureSkillsWatcher", () => {
     // Should NOT ignore normal skill files
     expect(ignored.some((re) => re.test("/tmp/.hidden/skills/index.md"))).toBe(false);
     expect(ignored.some((re) => re.test("/tmp/workspace/skills/my-skill/SKILL.md"))).toBe(false);
+  });
+
+  it("includes bundled skills dir in watch paths", async () => {
+    watchMock.mockClear();
+    const mod = await import("./refresh.js");
+    // Force a fresh watcher by using a different workspace dir
+    mod.ensureSkillsWatcher({ workspaceDir: "/tmp/workspace-bundled-test" });
+
+    expect(watchMock).toHaveBeenCalledTimes(1);
+    const watchedPaths = watchMock.mock.calls[0]?.[0] as string[];
+
+    // Should include workspace skills and bundled skills (as SKILL.md globs)
+    expect(watchedPaths.some((p) => p.startsWith("/tmp/workspace-bundled-test/skills"))).toBe(true);
+    expect(watchedPaths.some((p) => p.startsWith("/mock/package/root/skills"))).toBe(true);
   });
 });

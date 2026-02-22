@@ -1,3 +1,4 @@
+import type { DaemonInstallOptions } from "./types.js";
 import { buildGatewayInstallPlan } from "../../commands/daemon-install-helpers.js";
 import {
   DEFAULT_GATEWAY_DAEMON_RUNTIME,
@@ -13,6 +14,8 @@ import {
 import { resolveIsNixMode } from "../../config/paths.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { resolveGatewayAuth } from "../../gateway/auth.js";
+import { ensureWebAppBuilt } from "../../gateway/server-web-app.js";
+import { ensureControlUiAssetsBuilt } from "../../infra/control-ui-assets.js";
 import { defaultRuntime } from "../../runtime.js";
 import { formatCliCommand } from "../command-format.js";
 import {
@@ -21,7 +24,6 @@ import {
   installDaemonServiceAndEmit,
 } from "./response.js";
 import { parsePort } from "./shared.js";
-import type { DaemonInstallOptions } from "./types.js";
 
 export async function runDaemonInstall(opts: DaemonInstallOptions) {
   const json = Boolean(opts.json);
@@ -72,6 +74,27 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
         );
       }
       return;
+    }
+  }
+
+  // Pre-build web app + Control UI assets so the gateway doesn't block on
+  // builds when it boots for the first time after daemon install.
+  const webAppResult = await ensureWebAppBuilt(defaultRuntime, {
+    webAppConfig: cfg.gateway?.webApp,
+  });
+  if (!webAppResult.ok && webAppResult.message) {
+    if (json) {
+      warnings.push(webAppResult.message);
+    } else {
+      defaultRuntime.error(webAppResult.message);
+    }
+  }
+  const controlUiResult = await ensureControlUiAssetsBuilt(defaultRuntime);
+  if (!controlUiResult.ok && controlUiResult.message) {
+    if (json) {
+      warnings.push(controlUiResult.message);
+    } else {
+      defaultRuntime.error(controlUiResult.message);
     }
   }
 

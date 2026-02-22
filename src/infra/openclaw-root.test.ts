@@ -141,6 +141,16 @@ describe("resolveOpenClawPackageRoot", () => {
     expect(resolveOpenClawPackageRootSync({ moduleUrl })).toBe(pkgRoot);
   });
 
+  it("resolves ironclaw package root", async () => {
+    const { resolveOpenClawPackageRootSync } = await import("./openclaw-root.js");
+
+    const pkgRoot = fx("ironclaw");
+    setFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "ironclaw" }));
+    const moduleUrl = pathToFileURL(path.join(pkgRoot, "dist", "index.js")).toString();
+
+    expect(resolveOpenClawPackageRootSync({ moduleUrl })).toBe(pkgRoot);
+  });
+
   it("returns null for non-openclaw package roots", async () => {
     const pkgRoot = fx("not-openclaw");
     setFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "not-openclaw" }));

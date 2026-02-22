@@ -1,10 +1,14 @@
 import path from "node:path";
+import type { CanvasHostServer } from "../canvas-host/server.js";
+import type { PluginServicesHandle } from "../plugins/services.js";
+import type { RuntimeEnv } from "../runtime.js";
+import type { ControlUiRootState } from "./control-ui.js";
+import type { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/runs.js";
 import { registerSkillsChangeListener } from "../agents/skills/refresh.js";
 import { initSubagentRegistry } from "../agents/subagent-registry.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
-import type { CanvasHostServer } from "../canvas-host/server.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { createDefaultDeps } from "../cli/deps.js";
@@ -42,21 +46,17 @@ import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/di
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner, runGlobalGatewayStopSafely } from "../plugins/hook-runner-global.js";
 import { createEmptyPluginRegistry } from "../plugins/registry.js";
-import type { PluginServicesHandle } from "../plugins/services.js";
 import { getTotalQueueSize } from "../process/command-queue.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { startChannelHealthMonitor } from "./channel-health-monitor.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
-import type { ControlUiRootState } from "./control-ui.js";
 import {
   GATEWAY_EVENT_UPDATE_AVAILABLE,
   type GatewayUpdateAvailableEventPayload,
 } from "./events.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { NodeRegistry } from "./node-registry.js";
-import type { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import { createChannelManager } from "./server-channels.js";
 import { createAgentEventHandler } from "./server-chat.js";
 import { createGatewayCloseHandler } from "./server-close.js";
@@ -89,7 +89,6 @@ import {
   refreshGatewayHealthSnapshot,
 } from "./server/health-state.js";
 import { loadGatewayTlsRuntime } from "./server/tls.js";
-import { ensureGatewayStartupAuth } from "./startup-auth.js";
 
 export { __resetModelCatalogCacheForTest } from "./server-model-catalog.js";
 
@@ -101,6 +100,7 @@ const logDiscovery = log.child("discovery");
 const logTailscale = log.child("tailscale");
 const logChannels = log.child("channels");
 const logBrowser = log.child("browser");
+const logWebApp = log.child("webapp");
 const logHealth = log.child("health");
 const logCron = log.child("cron");
 const logReload = log.child("reload");
@@ -233,26 +233,28 @@ export async function startGatewayServer(
     }
   }
 
-  let cfgAtStart = loadConfig();
-  const authBootstrap = await ensureGatewayStartupAuth({
-    cfg: cfgAtStart,
-    env: process.env,
-    authOverride: opts.auth,
-    tailscaleOverride: opts.tailscale,
-    persist: true,
-  });
-  cfgAtStart = authBootstrap.cfg;
-  if (authBootstrap.generatedToken) {
-    if (authBootstrap.persistedGeneratedToken) {
-      log.info(
-        "Gateway auth token was missing. Generated a new token and saved it to config (gateway.auth.token).",
-      );
-    } else {
-      log.warn(
-        "Gateway auth token was missing. Generated a runtime token for this startup without changing config; restart will generate a different token. Persist one with `openclaw config set gateway.auth.mode token` and `openclaw config set gateway.auth.token <token>`.",
-      );
+  // Ensure gateway.webApp is enabled by default for all configs.
+  // Existing configs created before the web app feature won't have this key,
+  // so we backfill it on startup and persist.
+  {
+    const currentCfg = loadConfig();
+    if (currentCfg.gateway?.webApp === undefined) {
+      try {
+        await writeConfigFile({
+          ...currentCfg,
+          gateway: {
+            ...currentCfg.gateway,
+            webApp: { enabled: true },
+          },
+        });
+        log.info("gateway: auto-enabled webApp (gateway.webApp.enabled = true)");
+      } catch (err) {
+        log.warn(`gateway: failed to persist webApp auto-enable: ${String(err)}`);
+      }
     }
   }
+
+  const cfgAtStart = loadConfig();
   const diagnosticsEnabled = isDiagnosticsEnabled(cfgAtStart);
   if (diagnosticsEnabled) {
     startDiagnosticHeartbeat();
@@ -375,6 +377,8 @@ export async function startGatewayServer(
     removeChatRun,
     chatAbortControllers,
     toolEventRecipients,
+    sessionEventLog,
+    sessionSubscriptions,
   } = await createGatewayRuntimeState({
     cfg: cfgAtStart,
     bindHost,
@@ -512,6 +516,8 @@ export async function startGatewayServer(
           resolveSessionKeyForRun,
           clearAgentRunContext,
           toolEventRecipients,
+          sessionEventLog,
+          sessionSubscriptions,
         }),
       );
 
@@ -611,6 +617,20 @@ export async function startGatewayServer(
       addChatRun,
       removeChatRun,
       registerToolEventRecipient: toolEventRecipients.add,
+      registerSessionSubscription: sessionSubscriptions.add,
+      unregisterSessionSubscription: sessionSubscriptions.remove,
+      replaySessionEvents: (sessionKey: string, afterSeq: number, connId: string) => {
+        const events = sessionEventLog.replayAfter(sessionKey, afterSeq);
+        for (const entry of events) {
+          broadcastToConnIds(
+            "agent",
+            { ...entry.payload, globalSeq: entry.globalSeq },
+            new Set([connId]),
+          );
+        }
+        return events.length;
+      },
+      currentGlobalSeq: () => sessionEventLog.currentSeq(),
       dedupe,
       wizardSessions,
       findRunningWizard,
@@ -654,8 +674,9 @@ export async function startGatewayServer(
       });
 
   let browserControl: Awaited<ReturnType<typeof startBrowserControlServerIfEnabled>> = null;
+  let webApp: Awaited<ReturnType<typeof startGatewaySidecars>>["webApp"] = null;
   if (!minimalTestGateway) {
-    ({ browserControl, pluginServices } = await startGatewaySidecars({
+    ({ browserControl, pluginServices, webApp } = await startGatewaySidecars({
       cfg: cfgAtStart,
       pluginRegistry,
       defaultWorkspaceDir,
@@ -665,6 +686,7 @@ export async function startGatewayServer(
       logHooks,
       logChannels,
       logBrowser,
+      logWebApp,
     }));
   }
 
@@ -741,6 +763,7 @@ export async function startGatewayServer(
     clients,
     configReloader,
     browserControl,
+    webApp,
     wss,
     httpServer,
     httpServers,

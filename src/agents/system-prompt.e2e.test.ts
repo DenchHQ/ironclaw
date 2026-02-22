@@ -166,14 +166,24 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("<final>...</final>");
   });
 
-  it("includes a CLI quick reference section", () => {
+  it("includes a CLI quick reference section with default CLI name", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
     });
 
     expect(prompt).toContain("## OpenClaw CLI Quick Reference");
-    expect(prompt).toContain("openclaw gateway restart");
+    expect(prompt).toContain("ironclaw gateway restart");
     expect(prompt).toContain("Do not invent commands");
+  });
+
+  it("uses custom cliName in CLI quick reference when provided", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      cliName: "openclaw",
+    });
+
+    expect(prompt).toContain("openclaw gateway restart");
+    expect(prompt).not.toContain("ironclaw gateway");
   });
 
   it("marks system message blocks as internal and not user-visible", () => {

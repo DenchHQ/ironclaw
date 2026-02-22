@@ -1,5 +1,5 @@
-import crypto from "node:crypto";
 import type { Skill } from "@mariozechner/pi-coding-agent";
+import crypto from "node:crypto";
 import type { ChatType } from "../../channels/chat-type.js";
 import type { ChannelId } from "../../channels/plugins/types.js";
 import type { DeliveryContext } from "../../utils/delivery-context.js";
@@ -157,6 +157,8 @@ export type SessionSkillSnapshot = {
   skillFilter?: string[];
   resolvedSkills?: Skill[];
   version?: number;
+  /** Workspace dir this snapshot was built for (used to invalidate on profile switch). */
+  workspaceDir?: string;
 };
 
 export type SessionSystemPromptReport = {

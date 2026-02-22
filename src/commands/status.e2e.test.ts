@@ -398,9 +398,9 @@ describe("statusCommand", () => {
     expect(logs.some((l: string) => l.includes("Next steps:"))).toBe(true);
     expect(
       logs.some(
-        (l: string) =>
-          l.includes("openclaw status --all") ||
-          l.includes("openclaw --profile isolated status --all") ||
+        (l) =>
+          l.includes("ironclaw status --all") ||
+          l.includes("ironclaw --profile isolated status --all") ||
           l.includes("openclaw status --all") ||
           l.includes("openclaw --profile isolated status --all"),
       ),

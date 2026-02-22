@@ -3,10 +3,14 @@ import { fileURLToPath } from "node:url";
 import { resolveOpenClawPackageRoot } from "../infra/openclaw-root.js";
 import { pathExists } from "../utils.js";
 
-const FALLBACK_TEMPLATE_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../docs/reference/templates",
-);
+// In source layout the module lives at src/agents/, so ../../ reaches the repo root.
+// In bundled output (tsdown) it lives at dist/, so ../ reaches the package root.
+// Compute both candidates and pick whichever exists at resolution time.
+const _moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const FALLBACK_TEMPLATE_CANDIDATES = [
+  path.resolve(_moduleDir, "../../docs/reference/templates"),
+  path.resolve(_moduleDir, "../docs/reference/templates"),
+];
 
 let cachedTemplateDir: string | undefined;
 let resolvingTemplateDir: Promise<string> | undefined;
@@ -32,7 +36,7 @@ export async function resolveWorkspaceTemplateDir(opts?: {
     const candidates = [
       packageRoot ? path.join(packageRoot, "docs", "reference", "templates") : null,
       cwd ? path.resolve(cwd, "docs", "reference", "templates") : null,
-      FALLBACK_TEMPLATE_DIR,
+      ...FALLBACK_TEMPLATE_CANDIDATES,
     ].filter(Boolean) as string[];
 
     for (const candidate of candidates) {
@@ -42,7 +46,7 @@ export async function resolveWorkspaceTemplateDir(opts?: {
       }
     }
 
-    cachedTemplateDir = candidates[0] ?? FALLBACK_TEMPLATE_DIR;
+    cachedTemplateDir = candidates[0] ?? FALLBACK_TEMPLATE_CANDIDATES[0];
     return cachedTemplateDir;
   })();
 

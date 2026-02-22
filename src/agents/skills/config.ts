@@ -1,4 +1,5 @@
 import type { OpenClawConfig, SkillConfig } from "../../config/config.js";
+import type { SkillEligibilityContext, SkillEntry } from "./types.js";
 import {
   evaluateRuntimeRequires,
   hasBinary,
@@ -7,7 +8,6 @@ import {
   resolveRuntimePlatform,
 } from "../../shared/config-eval.js";
 import { resolveSkillKey } from "./frontmatter.js";
-import type { SkillEligibilityContext, SkillEntry } from "./types.js";
 
 const DEFAULT_CONFIG_VALUES: Record<string, boolean> = {
   "browser.enabled": true,
@@ -92,7 +92,7 @@ export function shouldIncludeSkill(params: {
   ) {
     return false;
   }
-  if (entry.metadata?.always === true) {
+  if (entry.metadata?.always === true || entry.metadata?.inject === true) {
     return true;
   }
 

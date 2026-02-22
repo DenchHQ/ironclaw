@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 import { listAgentIds } from "../../agents/agent-scope.js";
 import { BARE_SESSION_RESET_PROMPT } from "../../auto-reply/reply/session-reset-prompt.js";
 import { agentCommand } from "../../commands/agent.js";
@@ -37,6 +38,8 @@ import {
   validateAgentIdentityParams,
   validateAgentParams,
   validateAgentWaitParams,
+  validateAgentSubscribeParams,
+  validateAgentUnsubscribeParams,
 } from "../protocol/index.js";
 import {
   canonicalizeSpawnedByForAgent,
@@ -49,7 +52,6 @@ import { waitForAgentJob } from "./agent-job.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
 import { sessionsHandlers } from "./sessions.js";
-import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 
 const RESET_COMMAND_RE = /^\/(new|reset)(?:\s+([\s\S]*))?$/i;
 
@@ -189,6 +191,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupSpace?: string;
       lane?: string;
       extraSystemPrompt?: string;
+      workspace?: string;
       idempotencyKey: string;
       timeout?: number;
       label?: string;
@@ -556,6 +559,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         runId,
         lane: request.lane,
         extraSystemPrompt: request.extraSystemPrompt,
+        workspace: typeof request.workspace === "string" ? request.workspace.trim() : undefined,
         inputProvenance,
       },
       defaultRuntime,
@@ -687,5 +691,48 @@ export const agentHandlers: GatewayRequestHandlers = {
       endedAt: snapshot.endedAt,
       error: snapshot.error,
     });
+  },
+
+  "agent.subscribe": ({ params, client, respond, context }) => {
+    const validated = validateAgentSubscribeParams(params);
+    if (!validated.ok) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_PARAMS, formatValidationErrors(validated.errors)),
+      );
+      return;
+    }
+    const p = validated.value;
+    const connId = client?.connId;
+    if (!connId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_PARAMS, "no connection id"));
+      return;
+    }
+    context.registerSessionSubscription(p.sessionKey, connId);
+
+    // Replay buffered events past the caller's cursor.
+    const afterSeq = typeof p.afterSeq === "number" ? p.afterSeq : 0;
+    const replayed = context.replaySessionEvents(p.sessionKey, afterSeq, connId);
+    respond(true, { cursor: context.currentGlobalSeq(), replayed });
+  },
+
+  "agent.unsubscribe": ({ params, client, respond, context }) => {
+    const validated = validateAgentUnsubscribeParams(params);
+    if (!validated.ok) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_PARAMS, formatValidationErrors(validated.errors)),
+      );
+      return;
+    }
+    const connId = client?.connId;
+    if (!connId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_PARAMS, "no connection id"));
+      return;
+    }
+    context.unregisterSessionSubscription(validated.value.sessionKey, connId);
+    respond(true, {});
   },
 };

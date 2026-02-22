@@ -273,6 +273,15 @@ export type GatewayNodesConfig = {
   denyCommands?: string[];
 };
 
+export type GatewayWebAppConfig = {
+  /** If true, the Gateway will build and serve the Ironclaw Next.js web app. Default: false. */
+  enabled?: boolean;
+  /** Port for the Next.js web app (default: 3100). */
+  port?: number;
+  /** Run in dev mode (`next dev`) instead of production (`next build && next start`). Default: false. */
+  dev?: boolean;
+};
+
 export type GatewayToolsConfig = {
   /** Tools to deny via gateway HTTP /tools/invoke (extends defaults). */
   deny?: string[];
@@ -314,11 +323,8 @@ export type GatewayConfig = {
    * to determine the client IP for local pairing and HTTP checks.
    */
   trustedProxies?: string[];
-  /**
-   * Allow `x-real-ip` as a fallback only when `x-forwarded-for` is missing.
-   * Default: false (safer fail-closed behavior).
-   */
-  allowRealIpFallback?: boolean;
+  /** Ironclaw Next.js web app served alongside the gateway. */
+  webApp?: GatewayWebAppConfig;
   /** Tool access restrictions for HTTP /tools/invoke endpoint. */
   tools?: GatewayToolsConfig;
   /**

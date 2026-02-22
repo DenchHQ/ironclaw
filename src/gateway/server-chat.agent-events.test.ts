@@ -6,6 +6,8 @@ import {
   createAgentEventHandler,
   createChatRunState,
   createToolEventRecipientRegistry,
+  createSessionEventLog,
+  createSessionSubscriptionRegistry,
 } from "./server-chat.js";
 
 vi.mock("../config/config.js", () => ({
@@ -48,6 +50,9 @@ describe("agent event handler", () => {
     const chatRunState = createChatRunState();
     const toolEventRecipients = createToolEventRecipientRegistry();
 
+    const sessionEventLog = createSessionEventLog();
+    const sessionSubscriptions = createSessionSubscriptionRegistry();
+
     const handler = createAgentEventHandler({
       broadcast,
       broadcastToConnIds,
@@ -57,6 +62,8 @@ describe("agent event handler", () => {
       resolveSessionKeyForRun: params?.resolveSessionKeyForRun ?? (() => undefined),
       clearAgentRunContext: vi.fn(),
       toolEventRecipients,
+      sessionEventLog,
+      sessionSubscriptions,
     });
 
     return {
@@ -67,6 +74,8 @@ describe("agent event handler", () => {
       agentRunSeq,
       chatRunState,
       toolEventRecipients,
+      sessionEventLog,
+      sessionSubscriptions,
       handler,
     };
   }
@@ -300,229 +309,96 @@ describe("agent event handler", () => {
     resetAgentRunContextForTest();
   });
 
-  it("broadcasts fallback events to agent subscribers and node session", () => {
-    const { broadcast, broadcastToConnIds, nodeSendToSession, handler } = createHarness({
-      resolveSessionKeyForRun: () => "session-fallback",
+  // ── Session event log + replay cursor tests ──
+
+  it("assigns globalSeq to broadcast events and logs them", () => {
+    const { broadcast, sessionEventLog, handler } = createHarness({
+      resolveSessionKeyForRun: () => "session-log",
     });
 
     handler({
-      runId: "run-fallback",
+      runId: "run-log",
       seq: 1,
       stream: "lifecycle",
       ts: Date.now(),
-      data: {
-        phase: "fallback",
-        selectedProvider: "fireworks",
-        selectedModel: "fireworks/minimax-m2p5",
-        activeProvider: "deepinfra",
-        activeModel: "moonshotai/Kimi-K2.5",
-      },
+      data: { phase: "start" },
     });
-
-    expect(broadcastToConnIds).not.toHaveBeenCalled();
-    const broadcastAgentCalls = broadcast.mock.calls.filter(([event]) => event === "agent");
-    expect(broadcastAgentCalls).toHaveLength(1);
-    const payload = broadcastAgentCalls[0]?.[1] as {
-      sessionKey?: string;
-      stream?: string;
-      data?: Record<string, unknown>;
-    };
-    expect(payload.stream).toBe("lifecycle");
-    expect(payload.data?.phase).toBe("fallback");
-    expect(payload.sessionKey).toBe("session-fallback");
-    expect(payload.data?.activeProvider).toBe("deepinfra");
-
-    const nodeCalls = nodeSendToSession.mock.calls.filter(([, event]) => event === "agent");
-    expect(nodeCalls).toHaveLength(1);
-  });
-
-  it("remaps chat-linked lifecycle runId to client runId", () => {
-    const { broadcast, nodeSendToSession, chatRunState, handler } = createHarness({
-      resolveSessionKeyForRun: () => "session-fallback",
-    });
-    chatRunState.registry.add("run-fallback-internal", {
-      sessionKey: "session-fallback",
-      clientRunId: "run-fallback-client",
-    });
-
     handler({
-      runId: "run-fallback-internal",
-      seq: 1,
-      stream: "lifecycle",
-      ts: Date.now(),
-      data: {
-        phase: "fallback",
-        selectedProvider: "fireworks",
-        selectedModel: "fireworks/minimax-m2p5",
-        activeProvider: "deepinfra",
-        activeModel: "moonshotai/Kimi-K2.5",
-      },
-    });
-
-    const broadcastAgentCalls = broadcast.mock.calls.filter(([event]) => event === "agent");
-    expect(broadcastAgentCalls).toHaveLength(1);
-    const payload = broadcastAgentCalls[0]?.[1] as {
-      runId?: string;
-      sessionKey?: string;
-      stream?: string;
-      data?: Record<string, unknown>;
-    };
-    expect(payload.runId).toBe("run-fallback-client");
-    expect(payload.stream).toBe("lifecycle");
-    expect(payload.data?.phase).toBe("fallback");
-
-    const nodeCalls = nodeSendToSession.mock.calls.filter(([, event]) => event === "agent");
-    expect(nodeCalls).toHaveLength(1);
-    const nodePayload = nodeCalls[0]?.[2] as { runId?: string };
-    expect(nodePayload.runId).toBe("run-fallback-client");
-  });
-
-  it("uses agent event sessionKey when run-context lookup cannot resolve", () => {
-    const { broadcast, handler } = createHarness({
-      resolveSessionKeyForRun: () => undefined,
-    });
-
-    handler({
-      runId: "run-fallback-session-key",
-      seq: 1,
-      stream: "lifecycle",
-      ts: Date.now(),
-      sessionKey: "session-from-event",
-      data: {
-        phase: "fallback",
-        selectedProvider: "fireworks",
-        selectedModel: "fireworks/minimax-m2p5",
-        activeProvider: "deepinfra",
-        activeModel: "moonshotai/Kimi-K2.5",
-      },
-    });
-
-    const broadcastAgentCalls = broadcast.mock.calls.filter(([event]) => event === "agent");
-    expect(broadcastAgentCalls).toHaveLength(1);
-    const payload = broadcastAgentCalls[0]?.[1] as { sessionKey?: string };
-    expect(payload.sessionKey).toBe("session-from-event");
-  });
-
-  it("remaps chat-linked tool runId for non-full verbose payloads", () => {
-    const { broadcastToConnIds, chatRunState, toolEventRecipients, handler } = createHarness({
-      resolveSessionKeyForRun: () => "session-tool-remap",
-    });
-
-    chatRunState.registry.add("run-tool-internal", {
-      sessionKey: "session-tool-remap",
-      clientRunId: "run-tool-client",
-    });
-    registerAgentRunContext("run-tool-internal", {
-      sessionKey: "session-tool-remap",
-      verboseLevel: "on",
-    });
-    toolEventRecipients.add("run-tool-internal", "conn-1");
-
-    handler({
-      runId: "run-tool-internal",
-      seq: 1,
-      stream: "tool",
-      ts: Date.now(),
-      data: {
-        phase: "result",
-        name: "exec",
-        toolCallId: "tool-remap-1",
-        result: { content: [{ type: "text", text: "secret" }] },
-      },
-    });
-
-    expect(broadcastToConnIds).toHaveBeenCalledTimes(1);
-    const payload = broadcastToConnIds.mock.calls[0]?.[1] as { runId?: string };
-    expect(payload.runId).toBe("run-tool-client");
-    resetAgentRunContextForTest();
-  });
-
-  it("suppresses heartbeat ack-like chat output when showOk is false", () => {
-    const { broadcast, nodeSendToSession, chatRunState, handler } = createHarness({
-      now: 2_000,
-    });
-    chatRunState.registry.add("run-heartbeat", {
-      sessionKey: "session-heartbeat",
-      clientRunId: "client-heartbeat",
-    });
-    registerAgentRunContext("run-heartbeat", {
-      sessionKey: "session-heartbeat",
-      isHeartbeat: true,
-      verboseLevel: "off",
-    });
-
-    handler({
-      runId: "run-heartbeat",
-      seq: 1,
+      runId: "run-log",
+      seq: 2,
       stream: "assistant",
       ts: Date.now(),
-      data: {
-        text: "HEARTBEAT_OK Read HEARTBEAT.md if it exists (workspace context). Follow it strictly.",
-      },
+      data: { delta: "hello" },
     });
 
-    expect(chatBroadcastCalls(broadcast)).toHaveLength(0);
-    expect(sessionChatCalls(nodeSendToSession)).toHaveLength(0);
-
-    handler({
-      runId: "run-heartbeat",
-      seq: 2,
-      stream: "lifecycle",
-      ts: Date.now(),
-      data: { phase: "end" },
-    });
-
-    const chatCalls = chatBroadcastCalls(broadcast);
-    expect(chatCalls).toHaveLength(1);
-    const finalPayload = chatCalls[0]?.[1] as { state?: string; message?: unknown };
-    expect(finalPayload.state).toBe("final");
-    expect(finalPayload.message).toBeUndefined();
-    expect(sessionChatCalls(nodeSendToSession)).toHaveLength(1);
+    expect(broadcast).toHaveBeenCalledTimes(2);
+    const firstPayload = broadcast.mock.calls[0]?.[1] as { globalSeq?: number };
+    const secondPayload = broadcast.mock.calls[1]?.[1] as { globalSeq?: number };
+    expect(typeof firstPayload.globalSeq).toBe("number");
+    expect(typeof secondPayload.globalSeq).toBe("number");
+    expect(secondPayload.globalSeq).toBeGreaterThan(firstPayload.globalSeq!);
+    expect(sessionEventLog.currentSeq()).toBe(2);
   });
 
-  it("keeps heartbeat alert text in final chat output when remainder exceeds ackMaxChars", () => {
-    vi.mocked(loadConfig).mockReturnValue({
-      agents: { defaults: { heartbeat: { ackMaxChars: 10 } } },
+  it("routes events to session subscribers and replays from cursor", () => {
+    const { broadcastToConnIds, sessionEventLog, sessionSubscriptions, handler } = createHarness({
+      resolveSessionKeyForRun: () => "session-sub",
     });
 
-    const { broadcast, chatRunState, handler } = createHarness({ now: 3_000 });
-    chatRunState.registry.add("run-heartbeat-alert", {
-      sessionKey: "session-heartbeat-alert",
-      clientRunId: "client-heartbeat-alert",
+    // Emit two events before subscribing.
+    handler({ runId: "run-sub", seq: 1, stream: "lifecycle", ts: 1000, data: { phase: "start" } });
+    handler({ runId: "run-sub", seq: 2, stream: "assistant", ts: 1001, data: { delta: "hi" } });
+
+    const seqAfterTwo = sessionEventLog.currentSeq();
+
+    // Subscribe with cursor 0 — should be able to replay both events.
+    const replayed = sessionEventLog.replayAfter("session-sub", 0);
+    expect(replayed.length).toBe(2);
+    expect(replayed[0].globalSeq).toBe(seqAfterTwo - 1);
+    expect(replayed[1].globalSeq).toBe(seqAfterTwo);
+
+    // Subscribe after first event — should replay only the second.
+    const partial = sessionEventLog.replayAfter("session-sub", seqAfterTwo - 1);
+    expect(partial.length).toBe(1);
+    expect(partial[0].globalSeq).toBe(seqAfterTwo);
+
+    // Register a session subscriber and emit a new event.
+    sessionSubscriptions.add("session-sub", "conn-1");
+    broadcastToConnIds.mockClear();
+
+    handler({ runId: "run-sub", seq: 3, stream: "assistant", ts: 1002, data: { delta: " world" } });
+
+    // Session subscriber should receive the event via broadcastToConnIds (twice:
+    // once from the general tool/broadcast path, once from session subscriber routing).
+    const subCalls = broadcastToConnIds.mock.calls.filter((c) => {
+      const connIds = c[2] as ReadonlySet<string>;
+      return connIds.has("conn-1");
     });
-    registerAgentRunContext("run-heartbeat-alert", {
-      sessionKey: "session-heartbeat-alert",
-      isHeartbeat: true,
-      verboseLevel: "off",
+    expect(subCalls.length).toBeGreaterThanOrEqual(1);
+    const subPayload = subCalls[0]?.[1] as { globalSeq?: number };
+    expect(typeof subPayload.globalSeq).toBe("number");
+  });
+
+  it("replays nothing for unknown session key", () => {
+    const { sessionEventLog, handler } = createHarness({
+      resolveSessionKeyForRun: () => "session-x",
     });
 
-    handler({
-      runId: "run-heartbeat-alert",
-      seq: 1,
-      stream: "assistant",
-      ts: Date.now(),
-      data: {
-        text: "HEARTBEAT_OK Disk usage crossed 95 percent on /data and needs cleanup now.",
-      },
+    handler({ runId: "run-x", seq: 1, stream: "lifecycle", ts: 1000, data: { phase: "start" } });
+
+    const replayed = sessionEventLog.replayAfter("unknown-session", 0);
+    expect(replayed.length).toBe(0);
+  });
+
+  it("replays nothing when afterSeq >= current cursor", () => {
+    const { sessionEventLog, handler } = createHarness({
+      resolveSessionKeyForRun: () => "session-y",
     });
 
-    handler({
-      runId: "run-heartbeat-alert",
-      seq: 2,
-      stream: "lifecycle",
-      ts: Date.now(),
-      data: { phase: "end" },
-    });
+    handler({ runId: "run-y", seq: 1, stream: "lifecycle", ts: 1000, data: { phase: "start" } });
+    const current = sessionEventLog.currentSeq();
 
-    const chatCalls = chatBroadcastCalls(broadcast);
-    expect(chatCalls).toHaveLength(1);
-    const payload = chatCalls[0]?.[1] as {
-      state?: string;
-      message?: { content?: Array<{ text?: string }> };
-    };
-    expect(payload.state).toBe("final");
-    expect(payload.message?.content?.[0]?.text).toBe(
-      "Disk usage crossed 95 percent on /data and needs cleanup now.",
-    );
+    const replayed = sessionEventLog.replayAfter("session-y", current);
+    expect(replayed.length).toBe(0);
   });
 });

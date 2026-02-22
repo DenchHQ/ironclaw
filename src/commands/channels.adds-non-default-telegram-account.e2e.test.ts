@@ -330,7 +330,7 @@ describe("channels command", () => {
     });
     expect(lines.join("\n")).toMatch(/Warnings:/);
     expect(lines.join("\n")).toMatch(/Message Content Intent is disabled/i);
-    expect(lines.join("\n")).toMatch(/Run: (?:openclaw|openclaw)( --profile isolated)? doctor/);
+    expect(lines.join("\n")).toMatch(/Run: (?:ironclaw|openclaw)( --profile isolated)? doctor/);
   });
 
   it("surfaces Discord permission audit issues in channels status output", () => {

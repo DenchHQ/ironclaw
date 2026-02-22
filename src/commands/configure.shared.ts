@@ -10,6 +10,7 @@ import { stylePromptHint, stylePromptMessage, stylePromptTitle } from "../termin
 export const CONFIGURE_WIZARD_SECTIONS = [
   "workspace",
   "model",
+  "engine",
   "web",
   "gateway",
   "daemon",
@@ -52,6 +53,7 @@ export const CONFIGURE_SECTION_OPTIONS: Array<{
 }> = [
   { value: "workspace", label: "Workspace", hint: "Set workspace + sessions" },
   { value: "model", label: "Model", hint: "Pick provider + credentials" },
+  { value: "engine", label: "LLM Engine", hint: "Choose AI SDK or pi-agent" },
   { value: "web", label: "Web tools", hint: "Configure Brave search + fetch" },
   { value: "gateway", label: "Gateway", hint: "Port, bind, auth, tailscale" },
   {

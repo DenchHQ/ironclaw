@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { DEFAULT_BOOTSTRAP_FILENAME } from "../agents/workspace.js";
 import type { RuntimeEnv } from "../runtime.js";
-import { runOnboardingWizard } from "./onboarding.js";
 import type { WizardPrompter, WizardSelectParams } from "./prompts.js";
+import { DEFAULT_BOOTSTRAP_FILENAME } from "../agents/workspace.js";
+import { runOnboardingWizard } from "./onboarding.js";
 
 const ensureAuthProfileStore = vi.hoisted(() => vi.fn(() => ({ profiles: {} })));
 const promptAuthChoiceGrouped = vi.hoisted(() => vi.fn(async () => "skip"));
@@ -34,28 +34,8 @@ const finalizeOnboardingWizard = vi.hoisted(() =>
       await options.prompter.note("hint", "Web search (optional)");
     }
 
-    if (options.opts.skipUi) {
-      return { launchedTui: false };
-    }
-
-    const hatch = await options.prompter.select({
-      message: "How do you want to hatch your bot?",
-      options: [],
-    });
-    if (hatch !== "tui") {
-      return { launchedTui: false };
-    }
-
-    let message: string | undefined;
-    try {
-      await fs.stat(path.join(options.workspaceDir, DEFAULT_BOOTSTRAP_FILENAME));
-      message = "Wake up, my friend!";
-    } catch {
-      message = undefined;
-    }
-
-    await runTui({ deliver: false, message });
-    return { launchedTui: true };
+    // No hatch prompt — the web app auto-opens in the browser.
+    return { launchedTui: false };
   }),
 );
 const listChannelPlugins = vi.hoisted(() => vi.fn(() => []));
@@ -84,7 +64,8 @@ const readConfigFileSnapshot = vi.hoisted(() =>
 const ensureSystemdUserLingerInteractive = vi.hoisted(() => vi.fn(async () => {}));
 const isSystemdUserServiceAvailable = vi.hoisted(() => vi.fn(async () => true));
 const ensureControlUiAssetsBuilt = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
-const runTui = vi.hoisted(() => vi.fn(async (_options: unknown) => {}));
+const ensureWebAppBuilt = vi.hoisted(() => vi.fn(async () => ({ ok: true, built: false })));
+const runTui = vi.hoisted(() => vi.fn(async () => {}));
 const setupOnboardingShellCompletion = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock("../commands/onboard-channels.js", () => ({
@@ -164,6 +145,11 @@ vi.mock("../commands/systemd-linger.js", () => ({
 
 vi.mock("../daemon/systemd.js", () => ({
   isSystemdUserServiceAvailable,
+}));
+
+vi.mock("../gateway/server-web-app.js", () => ({
+  ensureWebAppBuilt,
+  DEFAULT_WEB_APP_PORT: 3100,
 }));
 
 vi.mock("../infra/control-ui-assets.js", () => ({
@@ -320,25 +306,11 @@ describe("runOnboardingWizard", () => {
     expect(runTui).not.toHaveBeenCalled();
   });
 
-  async function runTuiHatchTest(params: {
-    writeBootstrapFile: boolean;
-    expectedMessage: string | undefined;
-  }) {
-    runTui.mockClear();
-
+  it("does not launch TUI during onboarding (web app auto-opens instead)", async () => {
     const workspaceDir = await makeCaseDir("workspace-");
-    if (params.writeBootstrapFile) {
-      await fs.writeFile(path.join(workspaceDir, DEFAULT_BOOTSTRAP_FILENAME), "{}");
-    }
+    await fs.writeFile(path.join(workspaceDir, DEFAULT_BOOTSTRAP_FILENAME), "{}");
 
-    const select = vi.fn(async (opts: WizardSelectParams<unknown>) => {
-      if (opts.message === "How do you want to hatch your bot?") {
-        return "tui";
-      }
-      return "quickstart";
-    }) as unknown as WizardPrompter["select"];
-
-    const prompter = createWizardPrompter({ select });
+    const prompter = createWizardPrompter();
     const runtime = createRuntime({ throwsOnExit: true });
 
     await runOnboardingWizard(
@@ -357,20 +329,8 @@ describe("runOnboardingWizard", () => {
       prompter,
     );
 
-    expect(runTui).toHaveBeenCalledWith(
-      expect.objectContaining({
-        deliver: false,
-        message: params.expectedMessage,
-      }),
-    );
-  }
-
-  it("launches TUI without auto-delivery when hatching", async () => {
-    await runTuiHatchTest({ writeBootstrapFile: true, expectedMessage: "Wake up, my friend!" });
-  });
-
-  it("offers TUI hatch even without BOOTSTRAP.md", async () => {
-    await runTuiHatchTest({ writeBootstrapFile: false, expectedMessage: undefined });
+    // TUI should never be launched — web app is the default.
+    expect(runTui).not.toHaveBeenCalled();
   });
 
   it("shows the web search hint at the end of onboarding", async () => {

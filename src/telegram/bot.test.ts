@@ -274,6 +274,193 @@ describe("createTelegramBot", () => {
     expect(answerCallbackQuerySpy).toHaveBeenCalledWith("cbq-4");
   });
 
+  it("wraps inbound message with Telegram envelope", async () => {
+    const originalTz = process.env.TZ;
+    process.env.TZ = "Europe/Vienna";
+
+    try {
+      onSpy.mockReset();
+      const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
+      replySpy.mockReset();
+
+      createTelegramBot({ token: "tok" });
+      expect(onSpy).toHaveBeenCalledWith("message", expect.any(Function));
+      const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+      const message = {
+        chat: { id: 1234, type: "private" },
+        text: "hello world",
+        date: 1736380800, // 2025-01-09T00:00:00Z
+        from: {
+          first_name: "Ada",
+          last_name: "Lovelace",
+          username: "ada_bot",
+        },
+      };
+      await handler({
+        message,
+        me: { username: "openclaw_bot" },
+        getFile: async () => ({ download: async () => new Uint8Array() }),
+      });
+
+      expect(replySpy).toHaveBeenCalledTimes(1);
+      const payload = replySpy.mock.calls[0][0];
+      const expectedTimestamp = formatEnvelopeTimestamp(new Date("2025-01-09T00:00:00Z"));
+      const timestampPattern = escapeRegExp(expectedTimestamp);
+      expect(payload.Body).toMatch(
+        new RegExp(
+          `^\\[Telegram Ada Lovelace \\(@ada_bot\\) id:1234 (\\+\\d+[smhd] )?${timestampPattern}\\]`,
+        ),
+      );
+      expect(payload.Body).toContain("hello world");
+    } finally {
+      process.env.TZ = originalTz;
+    }
+  });
+
+  it("requests pairing by default for unknown DM senders", async () => {
+    onSpy.mockReset();
+    sendMessageSpy.mockReset();
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
+    replySpy.mockReset();
+
+    loadConfig.mockReturnValue({
+      channels: { telegram: { dmPolicy: "pairing" } },
+    });
+    readChannelAllowFromStore.mockResolvedValue([]);
+    upsertChannelPairingRequest.mockResolvedValue({
+      code: "PAIRME12",
+      created: true,
+    });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+    await handler({
+      message: {
+        chat: { id: 1234, type: "private" },
+        text: "hello",
+        date: 1736380800,
+        from: { id: 999, username: "random" },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(replySpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+    expect(sendMessageSpy.mock.calls[0]?.[0]).toBe(1234);
+    const pairingText = String(sendMessageSpy.mock.calls[0]?.[1]);
+    expect(pairingText).toContain("Your Telegram user id: 999");
+    expect(pairingText).toContain("Pairing code:");
+    expect(pairingText).toContain("PAIRME12");
+    expect(pairingText).toContain("ironclaw pairing approve telegram PAIRME12");
+    expect(pairingText).not.toContain("<code>");
+  });
+
+  it("does not resend pairing code when a request is already pending", async () => {
+    onSpy.mockReset();
+    sendMessageSpy.mockReset();
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
+    replySpy.mockReset();
+
+    loadConfig.mockReturnValue({
+      channels: { telegram: { dmPolicy: "pairing" } },
+    });
+    readChannelAllowFromStore.mockResolvedValue([]);
+    upsertChannelPairingRequest
+      .mockResolvedValueOnce({ code: "PAIRME12", created: true })
+      .mockResolvedValueOnce({ code: "PAIRME12", created: false });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+    const message = {
+      chat: { id: 1234, type: "private" },
+      text: "hello",
+      date: 1736380800,
+      from: { id: 999, username: "random" },
+    };
+
+    await handler({
+      message,
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+    await handler({
+      message: { ...message, text: "hello again" },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(replySpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("triggers typing cue via onReplyStart", async () => {
+    onSpy.mockReset();
+    sendChatActionSpy.mockReset();
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+    await handler({
+      message: { chat: { id: 42, type: "private" }, text: "hi" },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(sendChatActionSpy).toHaveBeenCalledWith(42, "typing", undefined);
+  });
+
+  it("accepts group messages when mentionPatterns match (without @botUsername)", async () => {
+    onSpy.mockReset();
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
+    replySpy.mockReset();
+
+    loadConfig.mockReturnValue({
+      agents: {
+        defaults: {
+          envelopeTimezone: "utc",
+        },
+      },
+      identity: { name: "Bert" },
+      messages: { groupChat: { mentionPatterns: ["\\bbert\\b"] } },
+      channels: {
+        telegram: {
+          groupPolicy: "open",
+          groups: { "*": { requireMention: true } },
+        },
+      },
+    });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+    await handler({
+      message: {
+        chat: { id: 7, type: "group", title: "Test Group" },
+        text: "bert: introduce yourself",
+        date: 1736380800,
+        message_id: 1,
+        from: { id: 9, first_name: "Ada" },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(replySpy).toHaveBeenCalledTimes(1);
+    const payload = replySpy.mock.calls[0][0];
+    expectInboundContextContract(payload);
+    expect(payload.WasMentioned).toBe(true);
+    const expectedTimestamp = formatEnvelopeTimestamp(new Date("2025-01-09T00:00:00Z"));
+    const timestampPattern = escapeRegExp(expectedTimestamp);
+    expect(payload.Body).toMatch(
+      new RegExp(`^\\[Telegram Test Group id:7 (\\+\\d+[smhd] )?${timestampPattern}\\]`),
+    );
+    expect(payload.SenderName).toBe("Ada");
+    expect(payload.SenderId).toBe("9");
+  });
+
   it("includes sender identity in group envelope headers", async () => {
     onSpy.mockReset();
     replySpy.mockReset();

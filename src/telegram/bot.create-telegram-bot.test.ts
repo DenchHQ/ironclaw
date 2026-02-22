@@ -1,7 +1,7 @@
+import type { Chat, Message } from "@grammyjs/types";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Chat, Message } from "@grammyjs/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { escapeRegExp, formatEnvelopeTimestamp } from "../../test/helpers/envelope-timestamp.js";
 import { withEnvAsync } from "../test-utils/env.js";
@@ -317,6 +317,81 @@ describe("createTelegramBot", () => {
         expect(pairingText, testCase.name).not.toContain("<code>");
       }
     }
+  });
+  it("requests pairing by default for unknown DM senders", async () => {
+    onSpy.mockReset();
+    sendMessageSpy.mockReset();
+    replySpy.mockReset();
+
+    loadConfig.mockReturnValue({
+      channels: { telegram: { dmPolicy: "pairing" } },
+    });
+    readChannelAllowFromStore.mockResolvedValue([]);
+    upsertChannelPairingRequest.mockResolvedValue({
+      code: "PAIRME12",
+      created: true,
+    });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+    await handler({
+      message: {
+        chat: { id: 1234, type: "private" },
+        text: "hello",
+        date: 1736380800,
+        from: { id: 999, username: "random" },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(replySpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+    expect(sendMessageSpy.mock.calls[0]?.[0]).toBe(1234);
+    const pairingText = String(sendMessageSpy.mock.calls[0]?.[1]);
+    expect(pairingText).toContain("Your Telegram user id: 999");
+    expect(pairingText).toContain("Pairing code:");
+    expect(pairingText).toContain("PAIRME12");
+    expect(pairingText).toContain("ironclaw pairing approve telegram PAIRME12");
+    expect(pairingText).not.toContain("<code>");
+  });
+  it("does not resend pairing code when a request is already pending", async () => {
+    onSpy.mockReset();
+    sendMessageSpy.mockReset();
+    replySpy.mockReset();
+
+    loadConfig.mockReturnValue({
+      channels: { telegram: { dmPolicy: "pairing" } },
+    });
+    readChannelAllowFromStore.mockResolvedValue([]);
+    upsertChannelPairingRequest
+      .mockResolvedValueOnce({ code: "PAIRME12", created: true })
+      .mockResolvedValueOnce({ code: "PAIRME12", created: false });
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+    const message = {
+      chat: { id: 1234, type: "private" },
+      text: "hello",
+      date: 1736380800,
+      from: { id: 999, username: "random" },
+    };
+
+    await handler({
+      message,
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+    await handler({
+      message: { ...message, text: "hello again" },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(replySpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
   });
   it("triggers typing cue via onReplyStart", async () => {
     createTelegramBot({ token: "tok" });

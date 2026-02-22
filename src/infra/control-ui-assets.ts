@@ -101,8 +101,8 @@ export async function resolveControlUiDistIndexPath(
       try {
         const raw = fs.readFileSync(pkgJsonPath, "utf-8");
         const parsed = JSON.parse(raw) as { name?: unknown };
-        if (parsed.name === "openclaw") {
-          return fs.existsSync(indexPath) ? indexPath : null;
+        if (parsed.name === "openclaw" || parsed.name === "ironclaw") {
+          return indexPath;
         }
         // Stop at the first package boundary to avoid resolving through unrelated ancestors.
         return null;

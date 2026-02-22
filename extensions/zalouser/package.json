@@ -7,7 +7,7 @@
     "@sinclair/typebox": "0.34.48"
   },
   "devDependencies": {
-    "openclaw": "workspace:*"
+    "ironclaw": "workspace:*"
   },
   "openclaw": {
     "extensions": [

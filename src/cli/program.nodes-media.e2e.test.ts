@@ -168,9 +168,15 @@ describe("cli program (nodes media)", () => {
       }),
     );
 
-    await expectLoggedSingleMediaFile({
-      expectedPathPattern: /openclaw-camera-clip-front-.*\.mp4$/,
-    });
+    const out = getFirstRuntimeLogLine();
+    const mediaPath = out.replace(/^MEDIA:/, "").trim();
+    expect(mediaPath).toMatch(/ironclaw-camera-clip-front-.*\.mp4$/);
+
+    try {
+      await expect(fs.readFile(mediaPath, "utf8")).resolves.toBe("hi");
+    } finally {
+      await fs.unlink(mediaPath).catch(() => {});
+    }
   });
 
   it("runs nodes camera snap with facing front and passes params", async () => {
@@ -286,6 +292,23 @@ describe("cli program (nodes media)", () => {
     await expectLoggedSingleMediaFile({
       expectedPathPattern: /openclaw-canvas-snapshot-.*\.png$/,
     });
+
+    const program = buildProgram();
+    runtime.log.mockClear();
+    await program.parseAsync(
+      ["nodes", "canvas", "snapshot", "--node", "ios-node", "--format", "png"],
+      { from: "user" },
+    );
+
+    const out = getFirstRuntimeLogLine();
+    const mediaPath = out.replace(/^MEDIA:/, "").trim();
+    expect(mediaPath).toMatch(/ironclaw-canvas-snapshot-.*\.png$/);
+
+    try {
+      await expect(fs.readFile(mediaPath, "utf8")).resolves.toBe("hi");
+    } finally {
+      await fs.unlink(mediaPath).catch(() => {});
+    }
   });
 
   it("fails nodes camera snap on invalid facing", async () => {

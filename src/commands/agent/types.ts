@@ -42,6 +42,8 @@ export type AgentCommandOpts = {
   thinkingOnce?: string;
   verbose?: string;
   json?: boolean;
+  /** Stream NDJSON events to stdout during the agent run. */
+  streamJson?: boolean;
   timeout?: string;
   deliver?: boolean;
   /** Override delivery target (separate from session routing). */
@@ -74,6 +76,8 @@ export type AgentCommandOpts = {
   runId?: string;
   extraSystemPrompt?: string;
   inputProvenance?: InputProvenance;
+  /** Workspace directory override (passed via RPC from the web UI for profile switching). */
+  workspace?: string;
   /** Per-call stream param overrides (best-effort). */
   streamParams?: AgentStreamParams;
 };

@@ -80,7 +80,7 @@ describe("nodes camera helpers", () => {
       tmpDir: "/tmp",
       id: "id1",
     });
-    expect(p).toBe(path.join("/tmp", "openclaw-camera-snap-front-id1.jpg"));
+    expect(p).toBe(path.join("/tmp", "ironclaw-camera-snap-front-id1.jpg"));
   });
 
   it("writes camera clip payload to temp path", async () => {

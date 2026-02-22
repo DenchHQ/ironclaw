@@ -9,7 +9,7 @@ bun.lockb
 coverage
 __pycache__/
 *.pyc
-.tsbuildinfo
+*.tsbuildinfo
 .pnpm-store
 .worktrees/
 .DS_Store
@@ -82,6 +82,10 @@ IDENTITY.md
 USER.md
 .tgz
 .idea
+
+# Next.js
+**/.next/
+next-env.d.ts
 
 # local tooling
 .serena/

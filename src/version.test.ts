@@ -37,8 +37,14 @@ async function writeJsonFixture(root: string, relativePath: string, value: unkno
 describe("version resolution", () => {
   it("resolves package version from nested dist/plugin-sdk module URL", async () => {
     await withTempDir(async (root) => {
-      await writeJsonFixture(root, "package.json", { name: "openclaw", version: "1.2.3" });
-      const moduleUrl = await ensureModuleFixture(root);
+      await fs.mkdir(path.join(root, "dist", "plugin-sdk"), { recursive: true });
+      await fs.writeFile(
+        path.join(root, "package.json"),
+        JSON.stringify({ name: "ironclaw", version: "1.2.3" }),
+        "utf-8",
+      );
+
+      const moduleUrl = moduleUrlFrom(root, "dist/plugin-sdk/index.js");
       expect(readVersionFromPackageJsonForModuleUrl(moduleUrl)).toBe("1.2.3");
       expect(resolveVersionFromModuleUrl(moduleUrl)).toBe("1.2.3");
     });
@@ -46,12 +52,19 @@ describe("version resolution", () => {
 
   it("ignores unrelated nearby package.json files", async () => {
     await withTempDir(async (root) => {
-      await writeJsonFixture(root, "package.json", { name: "openclaw", version: "2.3.4" });
-      await writeJsonFixture(root, "dist/package.json", {
-        name: "other-package",
-        version: "9.9.9",
-      });
-      const moduleUrl = await ensureModuleFixture(root);
+      await fs.mkdir(path.join(root, "dist", "plugin-sdk"), { recursive: true });
+      await fs.writeFile(
+        path.join(root, "package.json"),
+        JSON.stringify({ name: "ironclaw", version: "2.3.4" }),
+        "utf-8",
+      );
+      await fs.writeFile(
+        path.join(root, "dist", "package.json"),
+        JSON.stringify({ name: "other-package", version: "9.9.9" }),
+        "utf-8",
+      );
+
+      const moduleUrl = moduleUrlFrom(root, "dist/plugin-sdk/index.js");
       expect(readVersionFromPackageJsonForModuleUrl(moduleUrl)).toBe("2.3.4");
     });
   });

@@ -21,10 +21,12 @@ export function registerAgentCommands(program: Command, args: { agentChannelOpti
   program
     .command("agent")
     .description("Run an agent turn via the Gateway (use --local for embedded)")
-    .requiredOption("-m, --message <text>", "Message body for the agent")
+    .option("-m, --message <text>", "Message body for the agent")
     .option("-t, --to <number>", "Recipient number in E.164 used to derive the session key")
     .option("--session-id <id>", "Use an explicit session id")
+    .option("--session-key <key>", "Explicit session key (e.g. agent:main:subagent:uuid)")
     .option("--agent <id>", "Agent id (overrides routing bindings)")
+    .option("--lane <lane>", "Concurrency lane: main | web | subagent | cron | nested")
     .option("--thinking <level>", "Thinking level: off | minimal | low | medium | high")
     .option("--verbose <on|off>", "Persist agent verbose level for the session")
     .option(
@@ -41,6 +43,12 @@ export function registerAgentCommands(program: Command, args: { agentChannelOpti
     )
     .option("--deliver", "Send the agent's reply back to the selected channel", false)
     .option("--json", "Output result as JSON", false)
+    .option("--stream-json", "Stream NDJSON events to stdout", false)
+    .option(
+      "--subscribe-session-key <key>",
+      "Subscribe to gateway events for a session key (subscribe-only, no message required)",
+    )
+    .option("--after-seq <n>", "Replay events after this global sequence cursor", "0")
     .option(
       "--timeout <seconds>",
       "Override agent command timeout (seconds, default 600 or config value)",
@@ -73,10 +81,17 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/agent", "docs.openclaw.ai/cli/age
     .action(async (opts) => {
       const verboseLevel = typeof opts.verbose === "string" ? opts.verbose.toLowerCase() : "";
       setVerbose(verboseLevel === "on");
+      if (opts.json && opts.streamJson) {
+        throw new Error("Choose either --json or --stream-json, not both.");
+      }
       // Build default deps (keeps parity with other commands; future-proofing).
       const deps = createDefaultDeps();
       await runCommandWithRuntime(defaultRuntime, async () => {
-        await agentCliCommand(opts, defaultRuntime, deps);
+        await agentCliCommand(
+          { ...opts, streamJson: Boolean(opts.streamJson) },
+          defaultRuntime,
+          deps,
+        );
       });
     });
 
@@ -155,7 +170,7 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/agent", "docs.openclaw.ai/cli/age
         `
 ${theme.heading("Examples:")}
 ${formatHelpExamples([
-  ['openclaw agents set-identity --agent main --name "OpenClaw" --emoji "🦞"', "Set name + emoji."],
+  ['openclaw agents set-identity --agent main --name "Ironclaw" --emoji "🔩"', "Set name + emoji."],
   ["openclaw agents set-identity --agent main --avatar avatars/openclaw.png", "Set avatar path."],
   [
     "openclaw agents set-identity --workspace ~/.openclaw/workspace --from-identity",

@@ -61,6 +61,18 @@ export function getSubagentDepth(sessionKey: string | undefined | null): number 
   return raw.split(":subagent:").length - 1;
 }
 
+export function isWebSessionKey(sessionKey: string | undefined | null): boolean {
+  const raw = (sessionKey ?? "").trim();
+  if (!raw) {
+    return false;
+  }
+  if (raw.toLowerCase().startsWith("web:")) {
+    return true;
+  }
+  const parsed = parseAgentSessionKey(raw);
+  return Boolean((parsed?.rest ?? "").toLowerCase().startsWith("web:"));
+}
+
 export function isAcpSessionKey(sessionKey: string | undefined | null): boolean {
   const raw = (sessionKey ?? "").trim();
   if (!raw) {

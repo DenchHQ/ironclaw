@@ -1,3 +1,6 @@
+import type { CliDeps } from "../cli/deps.js";
+import type { loadConfig } from "../config/config.js";
+import type { loadOpenClawPlugins } from "../plugins/loader.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import {
@@ -7,8 +10,6 @@ import {
 } from "../agents/model-selection.js";
 import { resolveAgentSessionDirs } from "../agents/session-dirs.js";
 import { cleanStaleLockFiles } from "../agents/session-write-lock.js";
-import type { CliDeps } from "../cli/deps.js";
-import type { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { startGmailWatcherWithLogs } from "../hooks/gmail-watcher-lifecycle.js";
 import {
@@ -18,7 +19,6 @@ import {
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
 import { isTruthyEnvValue } from "../infra/env.js";
-import type { loadOpenClawPlugins } from "../plugins/loader.js";
 import { type PluginServicesHandle, startPluginServices } from "../plugins/services.js";
 import { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import {
@@ -26,6 +26,7 @@ import {
   shouldWakeFromRestartSentinel,
 } from "./server-restart-sentinel.js";
 import { startGatewayMemoryBackend } from "./server-startup-memory.js";
+import { type WebAppHandle, startWebAppIfEnabled } from "./server-web-app.js";
 
 const SESSION_LOCK_STALE_MS = 30 * 60 * 1000;
 
@@ -43,6 +44,11 @@ export async function startGatewaySidecars(params: {
   };
   logChannels: { info: (msg: string) => void; error: (msg: string) => void };
   logBrowser: { error: (msg: string) => void };
+  logWebApp: {
+    info: (msg: string) => void;
+    warn: (msg: string) => void;
+    error: (msg: string) => void;
+  };
 }) {
   try {
     const stateDir = resolveStateDir(process.env);
@@ -65,6 +71,31 @@ export async function startGatewaySidecars(params: {
     browserControl = await startBrowserControlServerIfEnabled();
   } catch (err) {
     params.logBrowser.error(`server failed to start: ${String(err)}`);
+  }
+
+  // Start the Ironclaw Next.js web app if enabled (gateway.webApp.enabled).
+  let webApp: WebAppHandle | null = null;
+  try {
+    webApp = await startWebAppIfEnabled(params.cfg.gateway?.webApp, params.logWebApp);
+  } catch (err) {
+    params.logWebApp.error(`web app failed to start: ${String(err)}`);
+  }
+
+  // Auto-open the web app in the default browser on every gateway start/restart.
+  if (webApp) {
+    try {
+      const { detectBrowserOpenSupport, openUrl } = await import("../commands/onboard-helpers.js");
+      const browserSupport = await detectBrowserOpenSupport();
+      if (browserSupport.ok) {
+        const webAppUrl = `http://localhost:${webApp.port}`;
+        const opened = await openUrl(webAppUrl);
+        if (opened) {
+          params.logWebApp.info(`opened ${webAppUrl} in browser`);
+        }
+      }
+    } catch {
+      // Browser open is best-effort; don't fail gateway startup.
+    }
   }
 
   // Start Gmail watcher if configured (hooks.gmail.account).
@@ -169,5 +200,5 @@ export async function startGatewaySidecars(params: {
     }, 750);
   }
 
-  return { browserControl, pluginServices };
+  return { browserControl, pluginServices, webApp };
 }

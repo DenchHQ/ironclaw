@@ -1,12 +1,13 @@
+import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import fs from "node:fs";
 import path from "node:path";
-import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
+import type { MsgContext } from "../../auto-reply/templating.js";
+import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
-import type { MsgContext } from "../../auto-reply/templating.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
@@ -42,7 +43,6 @@ import {
 import { formatForLog } from "../ws-log.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
-import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 
 type TranscriptAppendResult = {
   ok: boolean;
@@ -413,6 +413,67 @@ function appendAssistantTranscriptMessage(params: {
       : {}),
   };
 
+  try {
+    // IMPORTANT: Use SessionManager so the entry is attached to the current leaf via parentId.
+    // Raw jsonl appends break the parent chain and can hide compaction summaries from context.
+    const sessionManager = SessionManager.open(transcriptPath);
+    const messageId = sessionManager.appendMessage(messageBody);
+    return { ok: true, messageId, message: messageBody };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function appendUserTranscriptMessage(params: {
+  message: string;
+  images: ChatImageContent[];
+  sessionId: string;
+  storePath: string | undefined;
+  sessionFile?: string;
+  createIfMissing?: boolean;
+}): TranscriptAppendResult {
+  const transcriptPath = resolveTranscriptPath({
+    sessionId: params.sessionId,
+    storePath: params.storePath,
+    sessionFile: params.sessionFile,
+  });
+  if (!transcriptPath) {
+    return { ok: false, error: "transcript path not resolved" };
+  }
+
+  if (!fs.existsSync(transcriptPath)) {
+    if (!params.createIfMissing) {
+      return { ok: false, error: "transcript file not found" };
+    }
+    const ensured = ensureTranscriptFile({
+      transcriptPath,
+      sessionId: params.sessionId,
+    });
+    if (!ensured.ok) {
+      return { ok: false, error: ensured.error ?? "failed to create transcript file" };
+    }
+  }
+
+  const now = Date.now();
+  const content: Array<Record<string, unknown>> = [];
+  if (params.message.trim()) {
+    content.push({ type: "text", text: params.message });
+  }
+  for (const image of params.images) {
+    content.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: image.mimeType,
+        data: image.data,
+      },
+    });
+  }
+  const messageBody: Record<string, unknown> = {
+    role: "user",
+    content: content.length > 0 ? content : [],
+    timestamp: now,
+  };
   try {
     // IMPORTANT: Use SessionManager so the entry is attached to the current leaf via parentId.
     // Raw jsonl appends break the parent chain and can hide compaction summaries from context.
@@ -882,7 +943,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           context.logGateway.warn(`webchat dispatch failed: ${formatForLog(err)}`);
         },
         deliver: async (payload, info) => {
-          if (info.kind !== "final") {
+          if (info.kind !== "final" && info.kind !== "block") {
             return;
           }
           const text = payload.text?.trim() ?? "";
@@ -893,7 +954,30 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       });
 
+      const shouldPersistUser = parsedMessage.trim().startsWith("/");
       let agentRunStarted = false;
+      let userAppended = false;
+      const appendUserMessage = () => {
+        if (!shouldPersistUser || userAppended) {
+          return;
+        }
+        userAppended = true;
+        const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(p.sessionKey);
+        const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
+        const appendedUser = appendUserTranscriptMessage({
+          message: parsedMessage,
+          images: parsedImages,
+          sessionId,
+          storePath: latestStorePath,
+          sessionFile: latestEntry?.sessionFile,
+          createIfMissing: true,
+        });
+        if (!appendedUser.ok) {
+          context.logGateway.warn(
+            `webchat transcript user append failed: ${appendedUser.error ?? "unknown error"}`,
+          );
+        }
+      };
       void dispatchInboundMessage({
         ctx,
         cfg,
@@ -904,6 +988,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           images: parsedImages.length > 0 ? parsedImages : undefined,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
+            appendUserMessage();
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(
               client?.connect?.caps,
@@ -932,6 +1017,26 @@ export const chatHandlers: GatewayRequestHandlers = {
               .join("\n\n")
               .trim();
             let message: Record<string, unknown> | undefined;
+            const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(
+              p.sessionKey,
+            );
+            const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
+            if (!userAppended) {
+              const appendedUser = appendUserTranscriptMessage({
+                message: parsedMessage,
+                images: parsedImages,
+                sessionId,
+                storePath: latestStorePath,
+                sessionFile: latestEntry?.sessionFile,
+                createIfMissing: true,
+              });
+              userAppended = true;
+              if (!appendedUser.ok) {
+                context.logGateway.warn(
+                  `webchat transcript user append failed: ${appendedUser.error ?? "unknown error"}`,
+                );
+              }
+            }
             if (combinedReply) {
               const { storePath: latestStorePath, entry: latestEntry } =
                 loadSessionEntry(sessionKey);

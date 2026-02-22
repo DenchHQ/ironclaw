@@ -1,10 +1,11 @@
 import { createHmac, createHash } from "node:crypto";
 import type { ReasoningLevel, ThinkLevel } from "../auto-reply/thinking.js";
-import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
-import { listDeliverableMessageChannels } from "../utils/message-channel.js";
 import type { ResolvedTimeFormat } from "./date-time.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
+import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { DEFAULT_CLI_NAME } from "../cli/cli-name.js";
+import { listDeliverableMessageChannels } from "../utils/message-channel.js";
 import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
 
 /**
@@ -174,7 +175,62 @@ function buildVoiceSection(params: { isMinimal: boolean; ttsHint?: string }) {
   return ["## Voice (TTS)", hint, ""];
 }
 
-function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readToolName: string }) {
+function buildIronclawSection(isMinimal: boolean, workspaceDir?: string) {
+  if (isMinimal) {
+    return [];
+  }
+  // Derive web-chat path from workspace dir. web-chat follows the same
+  // profile suffix convention: web-chat (default) or web-chat-<profile>.
+  const webChatPath = (() => {
+    if (!workspaceDir) {
+      return "~/.openclaw/web-chat/";
+    }
+    const match = workspaceDir.match(/\/workspace(-[^/]+)?$/);
+    if (!match) {
+      return "~/.openclaw/web-chat/";
+    }
+    const stateDir = workspaceDir.replace(/\/workspace(-[^/]+)?$/, "");
+    const suffix = match[1] ?? ""; // e.g. "-work" or ""
+    return `${stateDir}/web-chat${suffix}/`;
+  })();
+  return [
+    "## Ironclaw",
+    "You are **Ironclaw** — a personal AI agent and a CRM Database System built by Kumar Abhirup (kumareth.com), running on top of the [OpenClaw](https://github.com/openclaw/openclaw) framework.",
+    "",
+    "### What you can do",
+    "- **Find leads**: scrape the web using the user's Chrome profile (all auth sessions, cookies, history) — LinkedIn, company directories, etc.",
+    "- **Enrich data**: fill in LinkedIn URLs, emails, education, company info for contacts in bulk.",
+    "- **Send outreach**: personalized LinkedIn messages, cold emails, follow-up sequences — each customized per lead.",
+    "- **Chat with the database**: translate plain-English questions to SQL against the local DuckDB workspace and return structured results.",
+    "- **Generate analytics**: interactive Recharts dashboards (bar, line, area, pie, donut, funnel, scatter, radar) from live DuckDB data, rendered inline in chat.",
+    "- **Automate everything**: cron jobs for follow-ups, lead scoring, pipeline reports, enrichment syncs, competitor monitoring.",
+    "- **Write and review code**: produce diffs the user can approve before applying.",
+    "- **Manage documents**: rich markdown with embedded live charts — SOPs, playbooks, onboarding guides.",
+    "",
+    "### Key architecture",
+    "- **Web UI**: Next.js app that usually runs at `localhost:3100` — chat panel, workspace sidebar, object tables, kanban boards, report cards, document editor, media viewer.",
+    "- **DuckDB workspace**: all structured data (objects, fields, entries, relations) in a local DuckDB database with EAV pattern and auto-generated PIVOT views (`v_<object>`).",
+    "- **Skills platform**: extend capabilities via `SKILL.md` files — browse at [skills.sh](https://skills.sh) and [ClawHub](https://clawhub.com).",
+    `- **Past Web Sessions**: Your past Ironclaw web chat sessions are stored in: ${webChatPath} (or near wherever you store your workspace)`,
+    "",
+    "### Links",
+    "- Website: https://ironclaw.sh",
+    "- Docs: https://docs.openclaw.ai",
+    "- GitHub: https://github.com/DenchHQ/ironclaw",
+    "- Discord: https://discord.gg/clawd",
+    "- Skills Store: https://skills.sh",
+    "",
+    "When referring to yourself, use **Ironclaw** (not OpenClaw). The underlying framework is OpenClaw; Ironclaw is the product the user interacts with.",
+    "",
+  ];
+}
+
+function buildDocsSection(params: {
+  docsPath?: string;
+  isMinimal: boolean;
+  readToolName: string;
+  cliName: string;
+}) {
   const docsPath = params.docsPath?.trim();
   if (!docsPath || params.isMinimal) {
     return [];
@@ -187,7 +243,7 @@ function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readT
     "Community: https://discord.com/invite/clawd",
     "Find new skills: https://clawhub.com",
     "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
-    "When diagnosing issues, run `openclaw status` yourself when possible; only ask the user if you lack access (e.g., sandboxed).",
+    `When diagnosing issues, run \`${params.cliName} status\` yourself when possible; only ask the user if you lack access (e.g., sandboxed).`,
     "",
   ];
 }
@@ -249,7 +305,10 @@ export function buildAgentSystemPrompt(params: {
     channel: string;
   };
   memoryCitationsMode?: MemoryCitationsMode;
+  /** CLI binary name (e.g. "ironclaw" or "openclaw"). Defaults to DEFAULT_CLI_NAME. */
+  cliName?: string;
 }) {
+  const cli = params.cliName?.trim() || DEFAULT_CLI_NAME;
   const coreToolSummaries: Record<string, string> = {
     read: "Read file contents",
     write: "Create or overwrite files",
@@ -419,8 +478,10 @@ export function buildAgentSystemPrompt(params: {
     docsPath: params.docsPath,
     isMinimal,
     readToolName,
+    cliName: cli,
   });
   const workspaceNotes = (params.workspaceNotes ?? []).map((note) => note.trim()).filter(Boolean);
+  const ironclawSection = buildIronclawSection(isMinimal, params.workspaceDir);
 
   // For "none" mode, return just the basic identity line
   if (promptMode === "none") {
@@ -468,11 +529,11 @@ export function buildAgentSystemPrompt(params: {
     "## OpenClaw CLI Quick Reference",
     "OpenClaw is controlled via subcommands. Do not invent commands.",
     "To manage the Gateway daemon service (start/stop/restart):",
-    "- openclaw gateway status",
-    "- openclaw gateway start",
-    "- openclaw gateway stop",
-    "- openclaw gateway restart",
-    "If unsure, ask the user to run `openclaw help` (or `openclaw gateway --help`) and paste the output.",
+    `- ${cli} gateway status`,
+    `- ${cli} gateway start`,
+    `- ${cli} gateway stop`,
+    `- ${cli} gateway restart`,
+    `If unsure, ask the user to run \`${cli} help\` (or \`${cli} gateway --help\`) and paste the output.`,
     "",
     ...skillsSection,
     ...memorySection,
@@ -503,7 +564,7 @@ export function buildAgentSystemPrompt(params: {
       ? "If you need the current date, time, or day of week, run session_status (📊 session_status)."
       : "",
     "## Workspace",
-    `Your working directory is: ${displayWorkspaceDir}`,
+    `Your working directory is: ${displayWorkspaceDir}.`,
     workspaceGuidance,
     ...workspaceNotes,
     "",
@@ -570,6 +631,7 @@ export function buildAgentSystemPrompt(params: {
       messageToolHints: params.messageToolHints,
     }),
     ...buildVoiceSection({ isMinimal, ttsHint: params.ttsHint }),
+    ...ironclawSection,
   ];
 
   if (extraSystemPrompt) {

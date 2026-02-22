@@ -1,9 +1,15 @@
-import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/config.js";
+import type { RuntimeEnv } from "../runtime.js";
+import type {
+  ChannelsWizardMode,
+  ConfigureWizardParams,
+  WizardSection,
+} from "./configure.shared.js";
+import { formatCliCommand } from "../cli/command-format.js";
 import { readConfigFileSnapshot, resolveGatewayPort, writeConfigFile } from "../config/config.js";
 import { logConfigUpdated } from "../config/logging.js";
+import { ensureWebAppBuilt } from "../gateway/server-web-app.js";
 import { ensureControlUiAssetsBuilt } from "../infra/control-ui-assets.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { note } from "../terminal/note.js";
 import { resolveUserPath } from "../utils.js";
@@ -13,11 +19,6 @@ import { removeChannelConfigWizard } from "./configure.channels.js";
 import { maybeInstallDaemon } from "./configure.daemon.js";
 import { promptAuthConfig } from "./configure.gateway-auth.js";
 import { promptGatewayConfig } from "./configure.gateway.js";
-import type {
-  ChannelsWizardMode,
-  ConfigureWizardParams,
-  WizardSection,
-} from "./configure.shared.js";
 import {
   CONFIGURE_SECTION_OPTIONS,
   confirm,
@@ -207,13 +208,60 @@ async function promptWebToolsConfig(
   };
 }
 
+async function promptEngineConfig(
+  nextConfig: OpenClawConfig,
+  runtime: RuntimeEnv,
+): Promise<OpenClawConfig> {
+  const currentEngine = nextConfig.agents?.engine ?? "aisdk";
+
+  note(
+    [
+      "Ironclaw supports two LLM engines for agent orchestration:",
+      "",
+      "• AI SDK (default): Vercel's AI SDK v6 - modern, flexible, supports AI Gateway",
+      "• pi-agent: Original implementation - battle-tested, full feature set",
+      "",
+      "Both engines emit compatible events, so UI and channels work with either.",
+    ].join("\n"),
+    "LLM Engine",
+  );
+
+  const engineChoice = guardCancel(
+    await select<"aisdk" | "pi-agent">({
+      message: "Which LLM engine should Ironclaw use?",
+      options: [
+        {
+          value: "aisdk",
+          label: "AI SDK (recommended)",
+          hint: "Vercel AI SDK v6 - supports AI Gateway, multiple providers",
+        },
+        {
+          value: "pi-agent",
+          label: "pi-agent (legacy)",
+          hint: "Original implementation - stable, proven",
+        },
+      ],
+      initialValue: currentEngine,
+    }),
+    runtime,
+  );
+
+  return {
+    ...nextConfig,
+    agents: {
+      ...nextConfig.agents,
+      engine: engineChoice,
+    },
+  };
+}
+
 export async function runConfigureWizard(
   opts: ConfigureWizardParams,
   runtime: RuntimeEnv = defaultRuntime,
 ) {
   try {
     printWizardHeader(runtime);
-    intro(opts.command === "update" ? "OpenClaw update wizard" : "OpenClaw configure");
+    intro(opts.command === "update" ? "Ironclaw update wizard" : "Ironclaw configure");
     const prompter = createClackPrompter();
 
     const snapshot = await readConfigFileSnapshot();
@@ -387,6 +435,10 @@ export async function runConfigureWizard(
         nextConfig = await promptAuthConfig(nextConfig, runtime, prompter);
       }
 
+      if (selected.includes("engine")) {
+        nextConfig = await promptEngineConfig(nextConfig, runtime);
+      }
+
       if (selected.includes("web")) {
         nextConfig = await promptWebToolsConfig(nextConfig, runtime);
       }
@@ -493,6 +545,12 @@ export async function runConfigureWizard(
       }
     }
 
+    const webAppResult = await ensureWebAppBuilt(runtime, {
+      webAppConfig: nextConfig.gateway?.webApp,
+    });
+    if (!webAppResult.ok && webAppResult.message) {
+      runtime.error(webAppResult.message);
+    }
     const controlUiAssets = await ensureControlUiAssetsBuilt(runtime);
     if (!controlUiAssets.ok && controlUiAssets.message) {
       runtime.error(controlUiAssets.message);

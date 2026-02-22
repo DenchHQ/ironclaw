@@ -178,6 +178,11 @@ export function resolveEffectiveModelFallbacks(params: {
 }
 
 export function resolveAgentWorkspaceDir(cfg: OpenClawConfig, agentId: string) {
+  // OPENCLAW_WORKSPACE overrides everything (set by the web UI for profile switching).
+  const envWorkspace = process.env.OPENCLAW_WORKSPACE?.trim();
+  if (envWorkspace) {
+    return resolveUserPath(envWorkspace);
+  }
   const id = normalizeAgentId(agentId);
   const configured = resolveAgentConfig(cfg, id)?.workspace?.trim();
   if (configured) {

@@ -1,4 +1,5 @@
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
@@ -7,7 +8,6 @@ import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
-import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
 import {
   extractAssistantText,
@@ -93,32 +93,24 @@ export function handleMessageUpdate(
       : undefined;
   const evtType = typeof assistantRecord?.type === "string" ? assistantRecord.type : "";
 
-  if (evtType === "thinking_start" || evtType === "thinking_delta" || evtType === "thinking_end") {
-    if (evtType === "thinking_start" || evtType === "thinking_delta") {
-      ctx.state.reasoningStreamOpen = true;
-    }
-    const thinkingDelta = typeof assistantRecord?.delta === "string" ? assistantRecord.delta : "";
-    const thinkingContent =
-      typeof assistantRecord?.content === "string" ? assistantRecord.content : "";
-    appendRawStream({
-      ts: Date.now(),
-      event: "assistant_thinking_stream",
-      runId: ctx.params.runId,
-      sessionId: (ctx.params.session as { id?: string }).id,
-      evtType,
-      delta: thinkingDelta,
-      content: thinkingContent,
-    });
-    if (ctx.state.streamReasoning) {
-      // Prefer full partial-message thinking when available; fall back to event payloads.
-      const partialThinking = extractAssistantThinking(msg);
-      ctx.emitReasoningStream(partialThinking || thinkingContent || thinkingDelta);
-    }
-    if (evtType === "thinking_end") {
-      if (!ctx.state.reasoningStreamOpen) {
-        ctx.state.reasoningStreamOpen = true;
+  // Handle native extended thinking events (Anthropic API thinking blocks).
+  // These arrive as thinking_delta / thinking_start / thinking_end from the
+  // provider adapter and must be forwarded to the agent event bus so that
+  // active-runs.ts (web UI) and other consumers receive them.
+  if (evtType === "thinking_delta" || evtType === "thinking_start" || evtType === "thinking_end") {
+    if (evtType === "thinking_delta") {
+      const thinkingDelta = typeof assistantRecord?.delta === "string" ? assistantRecord.delta : "";
+      if (thinkingDelta) {
+        emitAgentEvent({
+          runId: ctx.params.runId,
+          stream: "thinking",
+          data: { delta: thinkingDelta },
+        });
+        void ctx.params.onAgentEvent?.({
+          stream: "thinking",
+          data: { delta: thinkingDelta },
+        });
       }
-      emitReasoningEnd(ctx);
     }
     return;
   }
@@ -168,10 +160,9 @@ export function handleMessageUpdate(
     }
   }
 
-  if (ctx.state.streamReasoning) {
-    // Handle partial <think> tags: stream whatever reasoning is visible so far.
-    ctx.emitReasoningStream(extractThinkingFromTaggedStream(ctx.state.deltaBuffer));
-  }
+  // Extract <think>-tagged reasoning and emit for all consumers (NDJSON/SSE, TUI).
+  // The emitReasoningStream function handles dedup and delta computation internally.
+  ctx.emitReasoningStream(extractThinkingFromTaggedStream(ctx.state.deltaBuffer));
 
   const next = ctx
     .stripBlockTags(ctx.state.deltaBuffer, {

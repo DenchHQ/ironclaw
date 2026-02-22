@@ -1,9 +1,10 @@
+import chokidar, { type FSWatcher } from "chokidar";
 import os from "node:os";
 import path from "node:path";
-import chokidar, { type FSWatcher } from "chokidar";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
+import { resolveBundledSkillsDir } from "./bundled-dir.js";
 import { resolvePluginSkillDirs } from "./plugin-skills.js";
 
 type SkillsChangeEvent = {
@@ -64,6 +65,12 @@ function resolveWatchPaths(workspaceDir: string, config?: OpenClawConfig): strin
   }
   paths.push(path.join(CONFIG_DIR, "skills"));
   paths.push(path.join(os.homedir(), ".agents", "skills"));
+  // Also watch the bundled skills directory so changes to repo-level skills
+  // (e.g. skills/dench/SKILL.md) trigger snapshot refreshes without a restart.
+  const bundledDir = resolveBundledSkillsDir();
+  if (bundledDir) {
+    paths.push(bundledDir);
+  }
   const extraDirsRaw = config?.skills?.load?.extraDirs ?? [];
   const extraDirs = extraDirsRaw
     .map((d) => (typeof d === "string" ? d.trim() : ""))

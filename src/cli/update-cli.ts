@@ -2,19 +2,21 @@ import type { Command } from "commander";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { theme } from "../terminal/theme.js";
-import { inheritOptionFromParent } from "./command-options.js";
+import { replaceCliName, resolveCliName } from "./cli-name.js";
 import { formatHelpExamples } from "./help-format.js";
-import {
-  type UpdateCommandOptions,
-  type UpdateStatusOptions,
-  type UpdateWizardOptions,
-} from "./update-cli/shared.js";
 import { updateStatusCommand } from "./update-cli/status.js";
 import { updateCommand } from "./update-cli/update-command.js";
 import { updateWizardCommand } from "./update-cli/wizard.js";
 
+export type {
+  UpdateCommandOptions,
+  UpdateStatusOptions,
+  UpdateWizardOptions,
+} from "./update-cli/shared.js";
+
 export { updateCommand, updateStatusCommand, updateWizardCommand };
-export type { UpdateCommandOptions, UpdateStatusOptions, UpdateWizardOptions };
+
+const CLI_NAME = resolveCliName();
 
 function inheritedUpdateJson(command?: Command): boolean {
   return Boolean(inheritOptionFromParent<boolean>(command, "json"));
@@ -54,7 +56,10 @@ export function registerUpdateCli(program: Command) {
         ["openclaw --update", "Shorthand for openclaw update"],
       ] as const;
       const fmtExamples = examples
-        .map(([cmd, desc]) => `  ${theme.command(cmd)} ${theme.muted(`# ${desc}`)}`)
+        .map(
+          ([cmd, desc]) =>
+            `  ${theme.command(replaceCliName(cmd, CLI_NAME))} ${theme.muted(`# ${desc}`)}`,
+        )
         .join("\n");
       return `
 ${theme.heading("What this does:")}
@@ -63,7 +68,7 @@ ${theme.heading("What this does:")}
 
 ${theme.heading("Switch channels:")}
   - Use --channel stable|beta|dev to persist the update channel in config
-  - Run openclaw update status to see the active channel and source
+  - Run ${CLI_NAME} update status to see the active channel and source
   - Use --tag <dist-tag|version> for a one-off npm update without persisting
 
 ${theme.heading("Non-interactive:")}
@@ -125,9 +130,9 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/up
       "after",
       () =>
         `\n${theme.heading("Examples:")}\n${formatHelpExamples([
-          ["openclaw update status", "Show channel + version status."],
-          ["openclaw update status --json", "JSON output."],
-          ["openclaw update status --timeout 10", "Custom timeout."],
+          [`${CLI_NAME} update status`, "Show channel + version status."],
+          [`${CLI_NAME} update status --json`, "JSON output."],
+          [`${CLI_NAME} update status --timeout 10`, "Custom timeout."],
         ])}\n\n${theme.heading("Notes:")}\n${theme.muted(
           "- Shows current update channel (stable/beta/dev) and source",
         )}\n${theme.muted("- Includes git tag/branch/SHA for source checkouts")}\n\n${theme.muted(

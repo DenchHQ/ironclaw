@@ -65,7 +65,20 @@ export type AgentConfig = {
   tools?: AgentToolsConfig;
 };
 
+/**
+ * LLM engine to use for agent runs.
+ * - "aisdk": Vercel AI SDK (default for new installations)
+ * - "pi-agent": Original pi-agent implementation
+ */
+export type LlmEngineType = "aisdk" | "pi-agent";
+
 export type AgentsConfig = {
+  /**
+   * LLM engine to use for agent runs.
+   * - "aisdk": Vercel AI SDK (default for new installations)
+   * - "pi-agent": Original pi-agent implementation
+   */
+  engine?: LlmEngineType;
   defaults?: AgentDefaultsConfig;
   list?: AgentConfig[];
 };

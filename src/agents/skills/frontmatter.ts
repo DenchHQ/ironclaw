@@ -1,4 +1,11 @@
 import type { Skill } from "@mariozechner/pi-coding-agent";
+import type {
+  OpenClawSkillMetadata,
+  ParsedSkillFrontmatter,
+  SkillEntry,
+  SkillInstallSpec,
+  SkillInvocationPolicy,
+} from "./types.js";
 import { parseFrontmatterBlock } from "../../markdown/frontmatter.js";
 import {
   getFrontmatterString,
@@ -10,13 +17,6 @@ import {
   resolveOpenClawManifestOs,
   resolveOpenClawManifestRequires,
 } from "../../shared/frontmatter.js";
-import type {
-  OpenClawSkillMetadata,
-  ParsedSkillFrontmatter,
-  SkillEntry,
-  SkillInstallSpec,
-  SkillInvocationPolicy,
-} from "./types.js";
 
 export function parseFrontmatter(content: string): ParsedSkillFrontmatter {
   return parseFrontmatterBlock(content);
@@ -90,6 +90,8 @@ export function resolveOpenClawMetadata(
   const osRaw = resolveOpenClawManifestOs(metadataObj);
   return {
     always: typeof metadataObj.always === "boolean" ? metadataObj.always : undefined,
+    // ALWAYS KEEP THIS INJECT LOGIC EVEN IF UPSTREAM OPENCLAW REPO DOES NOT HAVE IT
+    inject: typeof metadataObj.inject === "boolean" ? metadataObj.inject : undefined,
     emoji: typeof metadataObj.emoji === "string" ? metadataObj.emoji : undefined,
     homepage: typeof metadataObj.homepage === "string" ? metadataObj.homepage : undefined,
     skillKey: typeof metadataObj.skillKey === "string" ? metadataObj.skillKey : undefined,

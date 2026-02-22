@@ -42,6 +42,10 @@ import {
   AgentsListResultSchema,
   type AgentWaitParams,
   AgentWaitParamsSchema,
+  type AgentSubscribeParams,
+  AgentSubscribeParamsSchema,
+  type AgentUnsubscribeParams,
+  AgentUnsubscribeParamsSchema,
   type ChannelsLogoutParams,
   ChannelsLogoutParamsSchema,
   type TalkConfigParams,
@@ -245,6 +249,12 @@ export const validateAgentParams = ajv.compile(AgentParamsSchema);
 export const validateAgentIdentityParams =
   ajv.compile<AgentIdentityParams>(AgentIdentityParamsSchema);
 export const validateAgentWaitParams = ajv.compile<AgentWaitParams>(AgentWaitParamsSchema);
+export const validateAgentSubscribeParams = ajv.compile<AgentSubscribeParams>(
+  AgentSubscribeParamsSchema,
+);
+export const validateAgentUnsubscribeParams = ajv.compile<AgentUnsubscribeParams>(
+  AgentUnsubscribeParamsSchema,
+);
 export const validateWakeParams = ajv.compile<WakeParams>(WakeParamsSchema);
 export const validateAgentsListParams = ajv.compile<AgentsListParams>(AgentsListParamsSchema);
 export const validateAgentsCreateParams = ajv.compile<AgentsCreateParams>(AgentsCreateParamsSchema);
@@ -526,6 +536,8 @@ export type {
   AgentIdentityParams,
   AgentIdentityResult,
   AgentWaitParams,
+  AgentSubscribeParams,
+  AgentUnsubscribeParams,
   ChatEvent,
   TickEvent,
   ShutdownEvent,

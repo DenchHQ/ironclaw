@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   writeConfigFile: vi.fn(),
   resolveGatewayPort: vi.fn(),
   ensureControlUiAssetsBuilt: vi.fn(),
+  ensureWebAppBuilt: vi.fn(async () => ({ ok: true, built: false })),
   createClackPrompter: vi.fn(),
   note: vi.fn(),
   printWizardHeader: vi.fn(),
@@ -33,6 +34,10 @@ vi.mock("../config/config.js", () => ({
   readConfigFileSnapshot: mocks.readConfigFileSnapshot,
   writeConfigFile: mocks.writeConfigFile,
   resolveGatewayPort: mocks.resolveGatewayPort,
+}));
+
+vi.mock("../gateway/server-web-app.js", () => ({
+  ensureWebAppBuilt: mocks.ensureWebAppBuilt,
 }));
 
 vi.mock("../infra/control-ui-assets.js", () => ({

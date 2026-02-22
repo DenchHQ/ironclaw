@@ -109,7 +109,7 @@ function resolveOpenClawRoot(): string {
   }
 
   for (const start of candidates) {
-    for (const name of ["openclaw"]) {
+    for (const name of ["ironclaw", "openclaw"]) {
       const found = findPackageRoot(start, name);
       if (found) {
         coreRootCache = found;

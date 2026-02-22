@@ -40,15 +40,20 @@ describe("resolveWorkspaceTemplateDir", () => {
     expect(resolved).toBe(templatesDir);
   });
 
-  it("falls back to package-root docs path when templates directory is missing", async () => {
+  it("resolves templates when package.json name is 'ironclaw'", async () => {
+    resetWorkspaceTemplateDirCache();
     const root = await makeTempRoot();
-    await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "openclaw" }));
+    await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "ironclaw" }));
+
+    const templatesDir = path.join(root, "docs", "reference", "templates");
+    await fs.mkdir(templatesDir, { recursive: true });
+    await fs.writeFile(path.join(templatesDir, "AGENTS.md"), "# ok\n");
 
     const distDir = path.join(root, "dist");
     await fs.mkdir(distDir, { recursive: true });
-    const moduleUrl = pathToFileURL(path.join(distDir, "model-selection.mjs")).toString();
+    const moduleUrl = pathToFileURL(path.join(distDir, "entry.mjs")).toString();
 
     const resolved = await resolveWorkspaceTemplateDir({ cwd: distDir, moduleUrl });
-    expect(path.normalize(resolved)).toBe(path.resolve("docs", "reference", "templates"));
+    expect(resolved).toBe(templatesDir);
   });
 });

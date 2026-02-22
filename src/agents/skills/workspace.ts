@@ -1,12 +1,27 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import {
   formatSkillsForPrompt,
   loadSkillsFromDir,
   type Skill,
 } from "@mariozechner/pi-coding-agent";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
+import type {
+  InjectedSkillContent,
+  ParsedSkillFrontmatter,
+  SkillEligibilityContext,
+  SkillCommandSpec,
+  SkillEntry,
+  SkillSnapshot,
+} from "./types.js";
+import type {
+  ParsedSkillFrontmatter,
+  SkillEligibilityContext,
+  SkillCommandSpec,
+  SkillEntry,
+  SkillSnapshot,
+} from "./types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
 import { resolveSandboxPath } from "../sandbox-paths.js";
@@ -20,13 +35,6 @@ import {
 } from "./frontmatter.js";
 import { resolvePluginSkillDirs } from "./plugin-skills.js";
 import { serializeByKey } from "./serialize.js";
-import type {
-  ParsedSkillFrontmatter,
-  SkillEligibilityContext,
-  SkillCommandSpec,
-  SkillEntry,
-  SkillSnapshot,
-} from "./types.js";
 
 const fsp = fs.promises;
 const skillsLogger = createSubsystemLogger("skills");
@@ -405,42 +413,21 @@ function loadSkillEntries(
   return skillEntries;
 }
 
-function applySkillsPromptLimits(params: { skills: Skill[]; config?: OpenClawConfig }): {
-  skillsForPrompt: Skill[];
-  truncated: boolean;
-  truncatedReason: "count" | "chars" | null;
-} {
-  const limits = resolveSkillsLimits(params.config);
-  const total = params.skills.length;
-  const byCount = params.skills.slice(0, Math.max(0, limits.maxSkillsInPrompt));
-
-  let skillsForPrompt = byCount;
-  let truncated = total > byCount.length;
-  let truncatedReason: "count" | "chars" | null = truncated ? "count" : null;
-
-  const fits = (skills: Skill[]): boolean => {
-    const block = formatSkillsForPrompt(skills);
-    return block.length <= limits.maxSkillsPromptChars;
-  };
-
-  if (!fits(skillsForPrompt)) {
-    // Binary search the largest prefix that fits in the char budget.
-    let lo = 0;
-    let hi = skillsForPrompt.length;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      if (fits(skillsForPrompt.slice(0, mid))) {
-        lo = mid;
-      } else {
-        hi = mid - 1;
+/** Read and strip frontmatter from a SKILL.md file, returning the body content. */
+function readSkillContent(filePath: string): string | undefined {
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    // Strip YAML frontmatter (--- ... ---)
+    if (raw.startsWith("---")) {
+      const endIndex = raw.indexOf("\n---", 3);
+      if (endIndex !== -1) {
+        return raw.slice(endIndex + "\n---".length).trim();
       }
     }
-    skillsForPrompt = skillsForPrompt.slice(0, lo);
-    truncated = true;
-    truncatedReason = "chars";
+    return raw.trim();
+  } catch {
+    return undefined;
   }
-
-  return { skillsForPrompt, truncated, truncatedReason };
 }
 
 export function buildWorkspaceSkillSnapshot(
@@ -463,28 +450,53 @@ export function buildWorkspaceSkillSnapshot(
     opts?.skillFilter,
     opts?.eligibility,
   );
-  const promptEntries = eligible.filter(
+
+  // Separate injected skills (inject: true) from lazy-loaded skills.
+  // Injected skills have their full content included in the system prompt automatically.
+  const injectedEntries: SkillEntry[] = [];
+  const lazyEntries: SkillEntry[] = [];
+  for (const entry of eligible) {
+    if (entry.metadata?.inject === true) {
+      injectedEntries.push(entry);
+    } else {
+      lazyEntries.push(entry);
+    }
+  }
+
+  // Build lazy-loaded skills prompt (XML format for on-demand reading)
+  const promptEntries = lazyEntries.filter(
     (entry) => entry.invocation?.disableModelInvocation !== true,
   );
   const resolvedSkills = promptEntries.map((entry) => entry.skill);
   const remoteNote = opts?.eligibility?.remote?.note?.trim();
-  const { skillsForPrompt, truncated } = applySkillsPromptLimits({
-    skills: resolvedSkills,
-    config: opts?.config,
-  });
+  const prompt = [remoteNote, formatSkillsForPrompt(resolvedSkills)].filter(Boolean).join("\n");
 
-  const truncationNote = truncated
-    ? `⚠️ Skills truncated: included ${skillsForPrompt.length} of ${resolvedSkills.length}. Run \`openclaw skills check\` to audit.`
-    : "";
+  // Read full content of injected skills, substituting workspace path placeholders.
+  // We replace both the tilde form and the expanded default path to handle
+  // cases where the replacement target is a profile-specific workspace dir.
+  //
+  // Use regex with a negative lookahead so "~/.openclaw/workspace" doesn't
+  // match inside "~/.openclaw/workspace-<profile>", which would double the
+  // profile suffix (e.g. workspace-kumareth -> workspace-kumareth-kumareth).
+  const defaultExpandedWorkspace = resolveUserPath("~/.openclaw/workspace");
+  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tildePattern = new RegExp(escapeRegex("~/.openclaw/workspace") + "(?![\\w-])", "g");
+  const injectedSkills: InjectedSkillContent[] = [];
+  for (const entry of injectedEntries) {
+    const rawContent = readSkillContent(entry.skill.filePath);
+    if (rawContent) {
+      let content = rawContent.replace(tildePattern, workspaceDir);
+      if (workspaceDir !== defaultExpandedWorkspace) {
+        const expandedPattern = new RegExp(
+          escapeRegex(defaultExpandedWorkspace) + "(?![\\w-])",
+          "g",
+        );
+        content = content.replace(expandedPattern, workspaceDir);
+      }
+      injectedSkills.push({ name: entry.skill.name, content });
+    }
+  }
 
-  const prompt = [
-    remoteNote,
-    truncationNote,
-    formatSkillsForPrompt(compactSkillPaths(skillsForPrompt)),
-  ]
-    .filter(Boolean)
-    .join("\n");
-  const skillFilter = normalizeSkillFilter(opts?.skillFilter);
   return {
     prompt,
     skills: eligible.map((entry) => ({
@@ -494,7 +506,9 @@ export function buildWorkspaceSkillSnapshot(
     })),
     ...(skillFilter === undefined ? {} : { skillFilter }),
     resolvedSkills,
+    injectedSkills: injectedSkills.length > 0 ? injectedSkills : undefined,
     version: opts?.snapshotVersion,
+    workspaceDir,
   };
 }
 

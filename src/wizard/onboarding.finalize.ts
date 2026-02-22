@@ -1,6 +1,8 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { DEFAULT_BOOTSTRAP_FILENAME } from "../agents/workspace.js";
+import type { OnboardOptions } from "../commands/onboard-types.js";
+import type { OpenClawConfig } from "../config/config.js";
+import type { RuntimeEnv } from "../runtime.js";
+import type { GatewayWizardSettings, WizardFlow } from "./onboarding.types.js";
+import type { WizardPrompter } from "./prompts.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import {
   buildGatewayInstallPlan,
@@ -20,18 +22,15 @@ import {
   waitForGatewayReachable,
   resolveControlUiLinks,
 } from "../commands/onboard-helpers.js";
-import type { OnboardOptions } from "../commands/onboard-types.js";
-import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
+import {
+  DEFAULT_WEB_APP_PORT,
+  ensureWebAppBuilt,
+  probeForWebApp,
+} from "../gateway/server-web-app.js";
 import { ensureControlUiAssetsBuilt } from "../infra/control-ui-assets.js";
-import type { RuntimeEnv } from "../runtime.js";
-import { restoreTerminalState } from "../terminal/restore.js";
-import { runTui } from "../tui/tui.js";
-import { resolveUserPath } from "../utils.js";
 import { setupOnboardingShellCompletion } from "./onboarding.completion.js";
-import type { GatewayWizardSettings, WizardFlow } from "./onboarding.types.js";
-import type { WizardPrompter } from "./prompts.js";
 
 type FinalizeOnboardingOptions = {
   flow: WizardFlow;
@@ -83,6 +82,26 @@ export async function finalizeOnboardingWizard(
         "Linux installs use a systemd user service by default. Without lingering, systemd stops the user session on logout/idle and kills the Gateway.",
       requireConfirm: false,
     });
+  }
+
+  // Pre-build web app + Control UI assets before daemon install so the
+  // gateway doesn't block on builds when it boots for the first time.
+  const controlUiEnabled =
+    nextConfig.gateway?.controlUi?.enabled ?? baseConfig.gateway?.controlUi?.enabled ?? true;
+  let webAppReady = false;
+  if (!opts.skipUi && controlUiEnabled) {
+    const webAppResult = await ensureWebAppBuilt(runtime, {
+      webAppConfig: nextConfig.gateway?.webApp,
+    });
+    webAppReady = webAppResult.ok;
+    if (!webAppResult.ok && webAppResult.message) {
+      runtime.error(webAppResult.message);
+    }
+
+    const controlUiAssets = await ensureControlUiAssetsBuilt(runtime);
+    if (!controlUiAssets.ok && controlUiAssets.message) {
+      runtime.error(controlUiAssets.message);
+    }
   }
 
   const explicitInstallDaemon =
@@ -223,15 +242,6 @@ export async function finalizeOnboardingWizard(
     }
   }
 
-  const controlUiEnabled =
-    nextConfig.gateway?.controlUi?.enabled ?? baseConfig.gateway?.controlUi?.enabled ?? true;
-  if (!opts.skipUi && controlUiEnabled) {
-    const controlUiAssets = await ensureControlUiAssetsBuilt(runtime);
-    if (!controlUiAssets.ok && controlUiAssets.message) {
-      runtime.error(controlUiAssets.message);
-    }
-  }
-
   await prompter.note(
     [
       "Add nodes for extra features:",
@@ -262,20 +272,11 @@ export async function finalizeOnboardingWizard(
   const gatewayStatusLine = gatewayProbe.ok
     ? "Gateway: reachable"
     : `Gateway: not detected${gatewayProbe.detail ? ` (${gatewayProbe.detail})` : ""}`;
-  const bootstrapPath = path.join(
-    resolveUserPath(options.workspaceDir),
-    DEFAULT_BOOTSTRAP_FILENAME,
-  );
-  const hasBootstrap = await fs
-    .access(bootstrapPath)
-    .then(() => true)
-    .catch(() => false);
-
   await prompter.note(
     [
-      `Web UI: ${links.httpUrl}`,
+      `Control UI: ${links.httpUrl}`,
       settings.authMode === "token" && settings.gatewayToken
-        ? `Web UI (with token): ${authedUrl}`
+        ? `Control UI (with token): ${authedUrl}`
         : undefined,
       `Gateway WS: ${links.wsUrl}`,
       gatewayStatusLine,
@@ -289,22 +290,8 @@ export async function finalizeOnboardingWizard(
   let controlUiOpened = false;
   let controlUiOpenHint: string | undefined;
   let seededInBackground = false;
-  let hatchChoice: "tui" | "web" | "later" | null = null;
-  let launchedTui = false;
 
   if (!opts.skipUi && gatewayProbe.ok) {
-    if (hasBootstrap) {
-      await prompter.note(
-        [
-          "This is the defining action that makes your agent you.",
-          "Please take your time.",
-          "The more you tell it, the better the experience will be.",
-          'We will send: "Wake up, my friend!"',
-        ].join("\n"),
-        "Start TUI (best option!)",
-      );
-    }
-
     await prompter.note(
       [
         "Gateway token: shared auth for the Gateway + Control UI.",
@@ -318,61 +305,38 @@ export async function finalizeOnboardingWizard(
       "Token",
     );
 
-    hatchChoice = await prompter.select({
-      message: "How do you want to hatch your bot?",
-      options: [
-        { value: "tui", label: "Hatch in TUI (recommended)" },
-        { value: "web", label: "Open the Web UI" },
-        { value: "later", label: "Do this later" },
-      ],
-      initialValue: "tui",
-    });
-
-    if (hatchChoice === "tui") {
-      restoreTerminalState("pre-onboarding tui", { resumeStdinIfPaused: true });
-      await runTui({
-        url: links.wsUrl,
-        token: settings.authMode === "token" ? settings.gatewayToken : undefined,
-        password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
-        // Safety: onboarding TUI should not auto-deliver to lastProvider/lastTo.
-        deliver: false,
-        message: hasBootstrap ? "Wake up, my friend!" : undefined,
-      });
-      launchedTui = true;
-    } else if (hatchChoice === "web") {
+    // Always open the Next.js web app in the browser (TUI available via `openclaw tui`).
+    if (webAppReady) {
+      // Probe for the actual port the web app is serving on — the daemon
+      // may have picked a different port if the configured one was busy.
+      const preferredWebAppPort = nextConfig.gateway?.webApp?.port ?? DEFAULT_WEB_APP_PORT;
+      const webAppPort = await detectRunningWebAppPort(preferredWebAppPort);
+      const webAppUrl = `http://localhost:${webAppPort}`;
       const browserSupport = await detectBrowserOpenSupport();
       if (browserSupport.ok) {
-        controlUiOpened = await openUrl(authedUrl);
-        if (!controlUiOpened) {
-          controlUiOpenHint = formatControlUiSshHint({
-            port: settings.port,
-            basePath: controlUiBasePath,
-            token: settings.authMode === "token" ? settings.gatewayToken : undefined,
-          });
-        }
-      } else {
-        controlUiOpenHint = formatControlUiSshHint({
-          port: settings.port,
-          basePath: controlUiBasePath,
-          token: settings.authMode === "token" ? settings.gatewayToken : undefined,
-        });
+        controlUiOpened = await openUrl(webAppUrl);
       }
       await prompter.note(
         [
-          `Dashboard link (with token): ${authedUrl}`,
+          `Ironclaw Web UI: ${webAppUrl}`,
           controlUiOpened
-            ? "Opened in your browser. Keep that tab to control OpenClaw."
-            : "Copy/paste this URL in a browser on this machine to control OpenClaw.",
-          controlUiOpenHint,
+            ? "Opened in your browser."
+            : "Copy/paste this URL in a browser on this machine.",
+          `Dashboard (control UI): ${authedUrl}`,
+          `Start TUI manually: ${formatCliCommand("openclaw tui")}`,
         ]
           .filter(Boolean)
           .join("\n"),
-        "Dashboard ready",
+        "Web UI ready",
       );
     } else {
       await prompter.note(
-        `When you're ready: ${formatCliCommand("openclaw dashboard --no-open")}`,
-        "Later",
+        [
+          "Web app build not available — skipping browser open.",
+          `Start TUI manually: ${formatCliCommand("openclaw tui")}`,
+          `Open the dashboard anytime: ${formatCliCommand("openclaw dashboard --no-open")}`,
+        ].join("\n"),
+        "Web UI",
       );
     }
   } else if (opts.skipUi) {
@@ -394,11 +358,12 @@ export async function finalizeOnboardingWizard(
 
   await setupOnboardingShellCompletion({ flow, prompter });
 
+  // Open the Control UI dashboard if we didn't already open the web app above.
   const shouldOpenControlUi =
     !opts.skipUi &&
     settings.authMode === "token" &&
     Boolean(settings.gatewayToken) &&
-    hatchChoice === null;
+    !controlUiOpened;
   if (shouldOpenControlUi) {
     const browserSupport = await detectBrowserOpenSupport();
     if (browserSupport.ok) {
@@ -422,8 +387,8 @@ export async function finalizeOnboardingWizard(
       [
         `Dashboard link (with token): ${authedUrl}`,
         controlUiOpened
-          ? "Opened in your browser. Keep that tab to control OpenClaw."
-          : "Copy/paste this URL in a browser on this machine to control OpenClaw.",
+          ? "Opened in your browser. Keep that tab to control Ironclaw."
+          : "Copy/paste this URL in a browser on this machine to control Ironclaw.",
         controlUiOpenHint,
       ]
         .filter(Boolean)
@@ -448,7 +413,7 @@ export async function finalizeOnboardingWizard(
       : [
           "If you want your agent to be able to search the web, you’ll need an API key.",
           "",
-          "OpenClaw uses Brave Search for the `web_search` tool. Without a Brave Search API key, web search won’t work.",
+          "Ironclaw uses Brave Search for the `web_search` tool. Without a Brave Search API key, web search won’t work.",
           "",
           "Set it up interactively:",
           `- Run: ${formatCliCommand("openclaw configure --section web")}`,
@@ -467,11 +432,30 @@ export async function finalizeOnboardingWizard(
 
   await prompter.outro(
     controlUiOpened
-      ? "Onboarding complete. Dashboard opened; keep that tab to control OpenClaw."
+      ? "Onboarding complete. Web UI opened; keep that tab to control Ironclaw."
       : seededInBackground
-        ? "Onboarding complete. Web UI seeded in the background; open it anytime with the dashboard link above."
-        : "Onboarding complete. Use the dashboard link above to control OpenClaw.",
+        ? "Onboarding complete. Web UI seeded in the background; open it anytime with the link above."
+        : "Onboarding complete. Use the links above to control Ironclaw.",
   );
 
-  return { launchedTui };
+  return { launchedTui: false };
+}
+
+/**
+ * Probe for the actual port the Next.js web app is serving on.
+ * The gateway may have picked a different port if the preferred one was busy
+ * (mirrors the fallback logic in `startWebAppIfEnabled`).
+ */
+async function detectRunningWebAppPort(preferred: number): Promise<number> {
+  if (await probeForWebApp(preferred)) {
+    return preferred;
+  }
+  for (let offset = 1; offset <= 10; offset++) {
+    const candidate = preferred + offset;
+    if (candidate <= 65535 && (await probeForWebApp(candidate))) {
+      return candidate;
+    }
+  }
+  // Not detected — fall back to the preferred port for display.
+  return preferred;
 }

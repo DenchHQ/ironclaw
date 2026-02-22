@@ -56,6 +56,15 @@ vi.mock("../daemon/inspect.js", () => ({
   renderGatewayServiceCleanupHints: () => [],
 }));
 
+vi.mock("../gateway/server-web-app.js", () => ({
+  ensureWebAppBuilt: vi.fn(async () => ({ ok: true, built: false })),
+  DEFAULT_WEB_APP_PORT: 3100,
+}));
+
+vi.mock("../infra/control-ui-assets.js", () => ({
+  ensureControlUiAssetsBuilt: vi.fn(async () => ({ ok: true, built: false })),
+}));
+
 vi.mock("../infra/ports.js", () => ({
   inspectPortUsage: (port: number) => inspectPortUsage(port),
   formatPortDiagnostics: () => ["Port 18789 is already in use."],
