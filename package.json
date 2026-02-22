@@ -1,6 +1,6 @@
 {
   "name": "ironclaw",
-  "version": "2026.2.15-1.7",
+  "version": "2026.2.15-1.9",
   "description": "AI-powered CRM platform with multi-channel agent gateway, DuckDB workspace, and knowledge management",
   "keywords": [],
   "license": "MIT",
@@ -110,6 +110,8 @@
     "test:macmini": "OPENCLAW_TEST_VM_FORKS=0 OPENCLAW_TEST_PROFILE=serial node scripts/test-parallel.mjs",
     "test:ui": "pnpm --dir ui test",
     "test:watch": "vitest",
+    "test:workspace": "vitest run --config vitest.unit.config.ts -- workspace-profiles workspace-chat-isolation workspace-context-awareness subagent-runs && pnpm --dir apps/web vitest run -- workspace-profiles workspace-chat-isolation subagent-runs route.test",
+    "test:workspace:live": "LIVE=1 vitest run --config vitest.live.config.ts -- workspace-context-awareness && LIVE=1 pnpm --dir apps/web vitest run -- subagent-streaming.live",
     "tsgo:test": "tsgo -p tsconfig.test.json",
     "tui": "node scripts/run-node.mjs tui",
     "tui:dev": "OPENCLAW_PROFILE=dev CLAWDBOT_PROFILE=dev node scripts/run-node.mjs --dev tui",
