@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { join, resolve, normalize, relative } from "node:path";
 import { homedir } from "node:os";
 import YAML from "yaml";
-import type { SavedView } from "./object-filters";
+import { normalizeFilterGroup, type SavedView } from "./object-filters";
 
 const execAsync = promisify(exec);
 
@@ -869,7 +869,10 @@ export function getObjectViews(objectName: string): {
   if (!config) {return { views: [], activeView: undefined };}
 
   return {
-    views: config.views ?? [],
+    views: (config.views ?? []).map((v) => ({
+      ...v,
+      filters: v.filters ? normalizeFilterGroup(v.filters) : undefined,
+    })),
     activeView: config.active_view,
   };
 }

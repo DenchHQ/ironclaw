@@ -210,6 +210,43 @@ export function isFilterGroup(
 }
 
 // ---------------------------------------------------------------------------
+// YAML normalization — convert array-style range values to value/valueTo
+// ---------------------------------------------------------------------------
+
+const RANGE_OPS = new Set<FilterOperator>(["date_between", "between"]);
+
+/**
+ * Normalize a single filter rule so that array-style range values
+ * (e.g. `value: ["2026-03-01", "2026-03-31"]`) are split into
+ * separate `value` and `valueTo` fields.
+ */
+export function normalizeFilterRule(rule: FilterRule): FilterRule {
+	if (
+		RANGE_OPS.has(rule.operator) &&
+		Array.isArray(rule.value) &&
+		rule.value.length >= 2 &&
+		rule.valueTo == null
+	) {
+		return { ...rule, value: rule.value[0], valueTo: rule.value[1] };
+	}
+	return rule;
+}
+
+/**
+ * Recursively normalize all filter rules in a group.
+ */
+export function normalizeFilterGroup(group: FilterGroup): FilterGroup {
+	return {
+		...group,
+		rules: group.rules.map((r) =>
+			isFilterGroup(r)
+				? normalizeFilterGroup(r)
+				: normalizeFilterRule(r),
+		),
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Client-side evaluator
 // ---------------------------------------------------------------------------
 
@@ -347,8 +384,9 @@ function evaluateRule(
 			case "lte":
 				return n <= v!;
 			case "between": {
-				const lo = coerceNumber(rule.value);
-				const hi = coerceNumber(rule.valueTo);
+				const arr = Array.isArray(rule.value) ? rule.value : null;
+				const lo = coerceNumber(arr ? arr[0] : rule.value);
+				const hi = coerceNumber(arr ? arr[1] : rule.valueTo);
 				if (lo == null || hi == null) {return false;}
 				return n >= lo && n <= hi;
 			}
@@ -391,8 +429,9 @@ function evaluateRule(
 			case "after":
 				return dateStr > target;
 			case "date_between": {
-				const from = coerceString(rule.value);
-				const to = coerceString(rule.valueTo);
+				const arr = Array.isArray(rule.value) ? rule.value : null;
+				const from = coerceString(arr ? arr[0] : rule.value);
+				const to = coerceString(arr ? arr[1] : rule.valueTo);
 				return dateStr >= from && dateStr <= to;
 			}
 		}
@@ -538,8 +577,9 @@ function buildRuleSQL(rule: FilterRule, fields: FieldMeta[]): string | null {
 	if (op === "lt" && numVal != null) {return `(CAST(${col} AS DOUBLE) < ${numVal})`;}
 	if (op === "lte" && numVal != null) {return `(CAST(${col} AS DOUBLE) <= ${numVal})`;}
 	if (op === "between") {
-		const lo = coerceNumber(rule.value);
-		const hi = coerceNumber(rule.valueTo);
+		const arr = Array.isArray(rule.value) ? rule.value : null;
+		const lo = coerceNumber(arr ? arr[0] : rule.value);
+		const hi = coerceNumber(arr ? arr[1] : rule.valueTo);
 		if (lo != null && hi != null) {return `(CAST(${col} AS DOUBLE) BETWEEN ${lo} AND ${hi})`;}
 	}
 
@@ -557,8 +597,9 @@ function buildRuleSQL(rule: FilterRule, fields: FieldMeta[]): string | null {
 		return `(CAST(${col} AS DATE) > '${sqlEscape(d)}')`;
 	}
 	if (op === "date_between") {
-		const from = coerceString(rule.value);
-		const to = coerceString(rule.valueTo);
+		const arr = Array.isArray(rule.value) ? rule.value : null;
+		const from = coerceString(arr ? arr[0] : rule.value);
+		const to = coerceString(arr ? arr[1] : rule.valueTo);
 		return `(CAST(${col} AS DATE) BETWEEN '${sqlEscape(from)}' AND '${sqlEscape(to)}')`;
 	}
 	if (op === "relative_past") {

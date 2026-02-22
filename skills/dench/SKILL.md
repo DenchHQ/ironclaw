@@ -117,6 +117,19 @@ views:
 active_view: "Active deals"
 ```
 
+**Date format**: All date filter values MUST use ISO 8601 `YYYY-MM-DD` strings (e.g. `"2026-03-01"`). The special value `today` is also supported for `on`, `before`, and `after` operators.
+
+**Date range filter** (`date_between`):
+
+```yaml
+- id: f1
+  field: Due Date
+  operator: date_between
+  value:
+    - "2026-03-01"
+    - "2026-03-31"
+```
+
 **Relative date filters** (e.g. "in the last 7 days"):
 
 ```yaml
