@@ -349,15 +349,24 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("- Opus: anthropic/claude-opus-4-5");
   });
 
-  it("adds ClaudeBot self-update guidance when gateway tool is available", () => {
+  it("adds self-update guidance when gateway tool is available", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       toolNames: ["gateway", "exec"],
     });
 
-    expect(prompt).toContain("## OpenClaw Self-Update");
+    expect(prompt).toContain("## Ironclaw Self-Update");
     expect(prompt).toContain("config.apply");
-    expect(prompt).toContain("update.run");
+  });
+
+  it("adds self-update guidance when self_update tool is available", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["self_update", "exec"],
+    });
+
+    expect(prompt).toContain("## Ironclaw Self-Update");
+    expect(prompt).toContain("self_update");
   });
 
   it("includes skills guidance when skills prompt is present", () => {

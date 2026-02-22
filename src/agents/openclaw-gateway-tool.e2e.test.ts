@@ -164,3 +164,38 @@ describe("gateway tool", () => {
     }
   });
 });
+
+describe("self_update tool", () => {
+  it("is not owner-only", () => {
+    const tool = createOpenClawTools().find((candidate) => candidate.name === "self_update");
+    expect(tool).toBeDefined();
+    expect(tool?.ownerOnly).toBeUndefined();
+  });
+
+  it("calls update.run on the gateway", async () => {
+    const gateway = await import("./tools/gateway.js");
+    const callSpy = gateway.callGatewayTool as ReturnType<typeof vi.fn>;
+    callSpy.mockClear();
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:main:web:session1",
+    }).find((candidate) => candidate.name === "self_update");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing self_update tool");
+    }
+
+    await tool.execute("call-su-1", {
+      note: "user requested update",
+    });
+
+    expect(callSpy).toHaveBeenCalledWith(
+      "update.run",
+      expect.any(Object),
+      expect.objectContaining({
+        note: "user requested update",
+        sessionKey: "agent:main:web:session1",
+      }),
+    );
+  });
+});

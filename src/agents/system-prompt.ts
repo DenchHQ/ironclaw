@@ -328,6 +328,7 @@ export function buildAgentSystemPrompt(params: {
     cron: "Manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the systemEvent text as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)",
     message: "Send messages and channel actions",
     gateway: "Restart, apply config, or run updates on the running OpenClaw process",
+    self_update: "Update Ironclaw to the latest version and restart the gateway",
     agents_list: "List agent ids allowed for sessions_spawn",
     sessions_list: "List other sessions (incl. sub-agents) with filters/last",
     sessions_history: "Fetch history for another session/sub-agent",
@@ -357,6 +358,7 @@ export function buildAgentSystemPrompt(params: {
     "cron",
     "message",
     "gateway",
+    "self_update",
     "agents_list",
     "sessions_list",
     "sessions_history",
@@ -405,6 +407,7 @@ export function buildAgentSystemPrompt(params: {
   }
 
   const hasGateway = availableTools.has("gateway");
+  const hasSelfUpdate = availableTools.has("self_update");
   const readToolName = resolveToolName("read");
   const execToolName = resolveToolName("exec");
   const processToolName = resolveToolName("process");
@@ -538,16 +541,23 @@ export function buildAgentSystemPrompt(params: {
     ...skillsSection,
     ...memorySection,
     // Skip self-update for subagent/none modes
-    hasGateway && !isMinimal ? "## OpenClaw Self-Update" : "",
-    hasGateway && !isMinimal
+    (hasGateway || hasSelfUpdate) && !isMinimal ? "## Ironclaw Self-Update" : "",
+    (hasGateway || hasSelfUpdate) && !isMinimal
       ? [
-          "Get Updates (self-update) is ONLY allowed when the user explicitly asks for it.",
+          'Self-update is ONLY allowed when the user explicitly asks for it (e.g. "update yourself", "upgrade", "get latest version").',
+          hasSelfUpdate
+            ? "When the user asks to update, use the `self_update` tool. It updates the Ironclaw package and restarts the gateway automatically."
+            : "",
+          hasGateway
+            ? "The `gateway` tool (owner-only) also supports update.run, config.apply, config.patch, and restart actions."
+            : "",
           "Do not run config.apply or update.run unless the user explicitly requests an update or config change; if it's not explicit, ask first.",
-          "Actions: config.get, config.schema, config.apply (validate + write full config, then restart), update.run (update deps or git, then restart).",
           "After restart, OpenClaw pings the last active session automatically.",
-        ].join("\n")
+        ]
+          .filter(Boolean)
+          .join("\n")
       : "",
-    hasGateway && !isMinimal ? "" : "",
+    (hasGateway || hasSelfUpdate) && !isMinimal ? "" : "",
     "",
     // Skip model aliases for subagent/none modes
     params.modelAliasLines && params.modelAliasLines.length > 0 && !isMinimal
