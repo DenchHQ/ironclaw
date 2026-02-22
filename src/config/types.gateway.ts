@@ -323,6 +323,11 @@ export type GatewayConfig = {
    * to determine the client IP for local pairing and HTTP checks.
    */
   trustedProxies?: string[];
+  /**
+   * When true, fall back to X-Real-IP header if X-Forwarded-For is absent.
+   * Only applies when trustedProxies is configured.
+   */
+  allowRealIpFallback?: boolean;
   /** Ironclaw Next.js web app served alongside the gateway. */
   webApp?: GatewayWebAppConfig;
   /** Tool access restrictions for HTTP /tools/invoke endpoint. */

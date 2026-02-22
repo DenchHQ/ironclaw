@@ -82,7 +82,8 @@ describe("ensureSkillsWatcher", () => {
     mod.ensureSkillsWatcher({ workspaceDir: "/tmp/workspace-bundled-test" });
 
     expect(watchMock).toHaveBeenCalledTimes(1);
-    const watchedPaths = watchMock.mock.calls[0]?.[0] as string[];
+    const watchedPaths =
+      (watchMock.mock.calls as unknown as Array<[string[], { ignored?: unknown }]>)[0]?.[0] ?? [];
 
     // Should include workspace skills and bundled skills (as SKILL.md globs)
     expect(watchedPaths.some((p) => p.startsWith("/tmp/workspace-bundled-test/skills"))).toBe(true);

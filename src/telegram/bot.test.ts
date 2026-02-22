@@ -13,10 +13,12 @@ import {
   enqueueSystemEventSpy,
   getLoadConfigMock,
   getReadChannelAllowFromStoreMock,
+  getUpsertChannelPairingRequestMock,
   getOnHandler,
   listSkillCommandsForAgents,
   onSpy,
   replySpy,
+  sendChatActionSpy,
   sendMessageSpy,
   setMyCommandsSpy,
   wasSentByBot,
@@ -25,6 +27,7 @@ import { createTelegramBot } from "./bot.js";
 
 const loadConfig = getLoadConfigMock();
 const readChannelAllowFromStore = getReadChannelAllowFromStoreMock();
+const upsertChannelPairingRequest = getUpsertChannelPairingRequestMock();
 
 function resolveSkillCommands(config: Parameters<typeof listNativeCommandSpecsForConfig>[0]) {
   void config;
@@ -280,7 +283,6 @@ describe("createTelegramBot", () => {
 
     try {
       onSpy.mockReset();
-      const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
       replySpy.mockReset();
 
       createTelegramBot({ token: "tok" });
@@ -321,7 +323,6 @@ describe("createTelegramBot", () => {
   it("requests pairing by default for unknown DM senders", async () => {
     onSpy.mockReset();
     sendMessageSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     loadConfig.mockReturnValue({
@@ -361,7 +362,6 @@ describe("createTelegramBot", () => {
   it("does not resend pairing code when a request is already pending", async () => {
     onSpy.mockReset();
     sendMessageSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     loadConfig.mockReturnValue({
@@ -414,7 +414,6 @@ describe("createTelegramBot", () => {
 
   it("accepts group messages when mentionPatterns match (without @botUsername)", async () => {
     onSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     loadConfig.mockReturnValue({

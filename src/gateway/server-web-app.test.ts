@@ -42,7 +42,7 @@ describe("server-web-app", () => {
     it("returns true when standalone server.js exists", async () => {
       const { hasStandaloneBuild, resolveStandaloneServerJs } = await import("./server-web-app.js");
       const webAppDir = "/pkg/apps/web";
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         return String(p) === resolveStandaloneServerJs(webAppDir);
       });
       expect(hasStandaloneBuild(webAppDir)).toBe(true);
@@ -60,7 +60,7 @@ describe("server-web-app", () => {
   describe("hasLegacyNextBuild", () => {
     it("returns true when .next/BUILD_ID exists", async () => {
       const { hasLegacyNextBuild } = await import("./server-web-app.js");
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         return String(p).endsWith(path.join(".next", "BUILD_ID"));
       });
       expect(hasLegacyNextBuild("/pkg/apps/web")).toBe(true);
@@ -78,7 +78,7 @@ describe("server-web-app", () => {
   describe("isInWorkspace", () => {
     it("returns true when pnpm-workspace.yaml exists at root", async () => {
       const { isInWorkspace } = await import("./server-web-app.js");
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         return String(p).endsWith("pnpm-workspace.yaml");
       });
       expect(isInWorkspace("/proj/apps/web")).toBe(true);
@@ -132,7 +132,7 @@ describe("server-web-app", () => {
 
     it("returns ok when standalone build exists", async () => {
       const { ensureWebAppBuilt } = await import("./server-web-app.js");
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;
@@ -148,7 +148,7 @@ describe("server-web-app", () => {
 
     it("returns ok when legacy .next/BUILD_ID exists (dev workspace)", async () => {
       const { ensureWebAppBuilt } = await import("./server-web-app.js");
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;
@@ -164,7 +164,7 @@ describe("server-web-app", () => {
 
     it("returns error for global install when no build found", async () => {
       const { ensureWebAppBuilt } = await import("./server-web-app.js");
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         // Only the package.json exists — no build, no workspace.
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
@@ -266,7 +266,7 @@ describe("server-web-app", () => {
       const { startWebAppIfEnabled } = await import("./server-web-app.js");
       mockChildProcess();
 
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;
@@ -304,7 +304,7 @@ describe("server-web-app", () => {
       const { startWebAppIfEnabled } = await import("./server-web-app.js");
       mockChildProcess();
 
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;
@@ -337,7 +337,7 @@ describe("server-web-app", () => {
       const { startWebAppIfEnabled } = await import("./server-web-app.js");
       mockChildProcess();
 
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         // Only package.json exists — no builds, no workspace.
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
@@ -359,7 +359,7 @@ describe("server-web-app", () => {
       const { startWebAppIfEnabled, DEFAULT_WEB_APP_PORT } = await import("./server-web-app.js");
       mockChildProcess();
 
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;
@@ -383,7 +383,7 @@ describe("server-web-app", () => {
       const { startWebAppIfEnabled } = await import("./server-web-app.js");
       const child = mockChildProcess();
 
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;
@@ -415,7 +415,7 @@ describe("server-web-app", () => {
       const { startWebAppIfEnabled } = await import("./server-web-app.js");
       const child = mockChildProcess();
 
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;
@@ -450,7 +450,7 @@ describe("server-web-app", () => {
 
       // resolveWebAppDir() needs to find a valid directory before reaching
       // the port check, so mock existsSync for the package.json check.
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;
@@ -491,7 +491,7 @@ describe("server-web-app", () => {
       const { startWebAppIfEnabled } = await import("./server-web-app.js");
       mockChildProcess();
 
-      existsSyncSpy.mockImplementation((p) => {
+      existsSyncSpy.mockImplementation((p: unknown) => {
         const s = String(p);
         if (s.endsWith(path.join("apps", "web", "package.json"))) {
           return true;

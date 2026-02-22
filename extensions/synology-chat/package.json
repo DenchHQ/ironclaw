@@ -5,7 +5,7 @@
   "description": "Synology Chat channel plugin for OpenClaw",
   "type": "module",
   "devDependencies": {
-    "openclaw": "workspace:*"
+    "ironclaw": "workspace:*"
   },
   "openclaw": {
     "extensions": [

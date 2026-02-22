@@ -1,27 +1,12 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   formatSkillsForPrompt,
   loadSkillsFromDir,
   type Skill,
 } from "@mariozechner/pi-coding-agent";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
-import type {
-  InjectedSkillContent,
-  ParsedSkillFrontmatter,
-  SkillEligibilityContext,
-  SkillCommandSpec,
-  SkillEntry,
-  SkillSnapshot,
-} from "./types.js";
-import type {
-  ParsedSkillFrontmatter,
-  SkillEligibilityContext,
-  SkillCommandSpec,
-  SkillEntry,
-  SkillSnapshot,
-} from "./types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
 import { resolveSandboxPath } from "../sandbox-paths.js";
@@ -35,6 +20,14 @@ import {
 } from "./frontmatter.js";
 import { resolvePluginSkillDirs } from "./plugin-skills.js";
 import { serializeByKey } from "./serialize.js";
+import type {
+  InjectedSkillContent,
+  ParsedSkillFrontmatter,
+  SkillEligibilityContext,
+  SkillCommandSpec,
+  SkillEntry,
+  SkillSnapshot,
+} from "./types.js";
 
 const fsp = fs.promises;
 const skillsLogger = createSubsystemLogger("skills");
@@ -430,6 +423,44 @@ function readSkillContent(filePath: string): string | undefined {
   }
 }
 
+function applySkillsPromptLimits(params: { skills: Skill[]; config?: OpenClawConfig }): {
+  skillsForPrompt: Skill[];
+  truncated: boolean;
+  truncatedReason: "count" | "chars" | null;
+} {
+  const limits = resolveSkillsLimits(params.config);
+  const total = params.skills.length;
+  const byCount = params.skills.slice(0, Math.max(0, limits.maxSkillsInPrompt));
+
+  let skillsForPrompt = byCount;
+  let truncated = total > byCount.length;
+  let truncatedReason: "count" | "chars" | null = truncated ? "count" : null;
+
+  const fits = (skills: Skill[]): boolean => {
+    const block = formatSkillsForPrompt(skills);
+    return block.length <= limits.maxSkillsPromptChars;
+  };
+
+  if (!fits(skillsForPrompt)) {
+    // Binary search the largest prefix that fits in the char budget.
+    let lo = 0;
+    let hi = skillsForPrompt.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (fits(skillsForPrompt.slice(0, mid))) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    skillsForPrompt = skillsForPrompt.slice(0, lo);
+    truncated = true;
+    truncatedReason = "chars";
+  }
+
+  return { skillsForPrompt, truncated, truncatedReason };
+}
+
 export function buildWorkspaceSkillSnapshot(
   workspaceDir: string,
   opts?: {
@@ -468,8 +499,21 @@ export function buildWorkspaceSkillSnapshot(
     (entry) => entry.invocation?.disableModelInvocation !== true,
   );
   const resolvedSkills = promptEntries.map((entry) => entry.skill);
+  const { skillsForPrompt, truncated } = applySkillsPromptLimits({
+    skills: resolvedSkills,
+    config: opts?.config,
+  });
+  const truncationNote = truncated
+    ? `⚠️ Skills truncated: included ${skillsForPrompt.length} of ${resolvedSkills.length}. Run \`openclaw skills check\` to audit.`
+    : "";
   const remoteNote = opts?.eligibility?.remote?.note?.trim();
-  const prompt = [remoteNote, formatSkillsForPrompt(resolvedSkills)].filter(Boolean).join("\n");
+  const prompt = [
+    remoteNote,
+    truncationNote,
+    formatSkillsForPrompt(compactSkillPaths(skillsForPrompt)),
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   // Read full content of injected skills, substituting workspace path placeholders.
   // We replace both the tilde form and the expanded default path to handle
@@ -497,6 +541,7 @@ export function buildWorkspaceSkillSnapshot(
     }
   }
 
+  const skillFilter = normalizeSkillFilter(opts?.skillFilter);
   return {
     prompt,
     skills: eligible.map((entry) => ({

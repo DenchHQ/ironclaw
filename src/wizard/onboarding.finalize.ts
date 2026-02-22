@@ -1,8 +1,3 @@
-import type { OnboardOptions } from "../commands/onboard-types.js";
-import type { OpenClawConfig } from "../config/config.js";
-import type { RuntimeEnv } from "../runtime.js";
-import type { GatewayWizardSettings, WizardFlow } from "./onboarding.types.js";
-import type { WizardPrompter } from "./prompts.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import {
   buildGatewayInstallPlan,
@@ -22,6 +17,8 @@ import {
   waitForGatewayReachable,
   resolveControlUiLinks,
 } from "../commands/onboard-helpers.js";
+import type { OnboardOptions } from "../commands/onboard-types.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
 import {
@@ -30,7 +27,10 @@ import {
   probeForWebApp,
 } from "../gateway/server-web-app.js";
 import { ensureControlUiAssetsBuilt } from "../infra/control-ui-assets.js";
+import type { RuntimeEnv } from "../runtime.js";
 import { setupOnboardingShellCompletion } from "./onboarding.completion.js";
+import type { GatewayWizardSettings, WizardFlow } from "./onboarding.types.js";
+import type { WizardPrompter } from "./prompts.js";
 
 type FinalizeOnboardingOptions = {
   flow: WizardFlow;

@@ -67,6 +67,7 @@ vi.mock("../gateway/client.js", () => {
 import type { OpenClawConfig } from "../config/config.js";
 import * as configModule from "../config/config.js";
 import { callGateway } from "../gateway/call.js";
+import type { RuntimeEnv } from "../runtime.js";
 import { agentCliCommand, emitNdjsonLine } from "./agent-via-gateway.js";
 import { agentCommand } from "./agent.js";
 
@@ -252,7 +253,7 @@ describe("agentCliCommand", () => {
     const store = path.join(dir, "sessions.json");
     mockConfig(store);
 
-    vi.mocked(agentCommand).mockResolvedValueOnce(undefined);
+    mockLocalAgentReply();
 
     try {
       await agentCliCommand({ message: "hi", to: "+1555", local: true, streamJson: true }, runtime);
