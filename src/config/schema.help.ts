@@ -117,6 +117,11 @@ export const FIELD_HELP: Record<string, string> = {
   "tools.web.search.maxResults": "Default number of results to return (1-10).",
   "tools.web.search.timeoutSeconds": "Timeout in seconds for web_search requests.",
   "tools.web.search.cacheTtlMinutes": "Cache TTL in minutes for web_search results.",
+    "tools.web.search.exa.apiKey": "Exa API key (fallback: EXA_API_KEY env var).",
+  "tools.web.search.exa.contents":
+    "Include page text in results; when false, only URLs and titles are returned (default: true).",
+  "tools.web.search.exa.maxChars":
+    "Max characters of page text per result; higher values provide more context but use more tokens (default: 1500).",
   "tools.web.search.perplexity.apiKey":
     "Perplexity or OpenRouter API key (fallback: PERPLEXITY_API_KEY or OPENROUTER_API_KEY env var).",
   "tools.web.search.perplexity.baseUrl":

@@ -18,7 +18,7 @@ import {
   writeCache,
 } from "./web-shared.js";
 
-const SEARCH_PROVIDERS = ["brave", "perplexity", "grok"] as const;
+const SEARCH_PROVIDERS = ["brave", "perplexity", "grok", "exa"] as const;
 const DEFAULT_SEARCH_COUNT = 5;
 const MAX_SEARCH_COUNT = 10;
 
@@ -31,6 +31,9 @@ const OPENROUTER_KEY_PREFIXES = ["sk-or-"];
 
 const XAI_API_ENDPOINT = "https://api.x.ai/v1/responses";
 const DEFAULT_GROK_MODEL = "grok-4-1-fast";
+
+const EXA_SEARCH_ENDPOINT = "https://api.exa.ai/search";
+const DEFAULT_EXA_MAX_CHARS = 1500;
 
 const SEARCH_CACHE = new Map<string, CacheEntry<Record<string, unknown>>>();
 const BRAVE_FRESHNESS_SHORTCUTS = new Set(["pd", "pw", "pm", "py"]);
@@ -101,6 +104,13 @@ type GrokConfig = {
   model?: string;
   inlineCitations?: boolean;
 };
+
+type ExaConfig = {
+  apiKey?: string;
+  contents?: boolean;
+  maxChars?: number;
+};
+
 
 type GrokSearchResponse = {
   output?: Array<{
@@ -211,6 +221,14 @@ function resolveSearchApiKey(search?: WebSearchConfig): string | undefined {
 }
 
 function missingSearchKeyPayload(provider: (typeof SEARCH_PROVIDERS)[number]) {
+  if (provider === "exa") {
+    return {
+      error: "missing_exa_api_key",
+      message:
+        "web_search (exa) needs an Exa API key. Set EXA_API_KEY in the Gateway environment, or configure tools.web.search.exa.apiKey.",
+      docs: "https://docs.openclaw.ai/tools/web",
+    };
+  }
   if (provider === "perplexity") {
     return {
       error: "missing_perplexity_api_key",
@@ -388,6 +406,41 @@ function resolveGrokModel(grok?: GrokConfig): string {
 function resolveGrokInlineCitations(grok?: GrokConfig): boolean {
   return grok?.inlineCitations === true;
 }
+
+function resolveExaConfig(search?: WebSearchConfig): ExaConfig {
+  if (!search || typeof search !== "object") {
+    return {};
+  }
+  const exa = "exa" in search ? search.exa : undefined;
+  if (!exa || typeof exa !== "object") {
+    return {};
+  }
+  return exa as ExaConfig;
+}
+
+function resolveExaApiKey(exa?: ExaConfig): string | undefined {
+  const fromConfig = normalizeApiKey(exa?.apiKey);
+  if (fromConfig) {
+    return fromConfig;
+  }
+  const fromEnv = normalizeApiKey(process.env.EXA_API_KEY);
+  return fromEnv || undefined;
+}
+
+function resolveExaContents(exa?: ExaConfig): boolean {
+  if (exa && typeof exa.contents === "boolean") {
+    return exa.contents;
+  }
+  return true;
+}
+
+function resolveExaMaxChars(exa?: ExaConfig): number {
+  if (exa && typeof exa.maxChars === "number" && exa.maxChars > 0) {
+    return exa.maxChars;
+  }
+  return DEFAULT_EXA_MAX_CHARS;
+}
+
 
 function resolveSearchCount(value: unknown, fallback: number): number {
   const parsed = typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -573,6 +626,69 @@ async function runGrokSearch(params: {
   return { content, citations, inlineCitations };
 }
 
+
+async function runExaSearch(params: {
+  query: string;
+  count: number;
+  apiKey: string;
+  timeoutSeconds: number;
+  contents: boolean;
+  maxChars: number;
+}): Promise<{
+  results: Array<{
+    title: string;
+    url: string;
+    description: string;
+    published?: string;
+  }>;
+}> {
+  const body: Record<string, unknown> = {
+    query: params.query,
+    numResults: params.count,
+    type: "auto",
+  };
+  if (params.contents) {
+    body.contents = {
+      text: { maxCharacters: params.maxChars },
+    };
+  }
+
+  const res = await fetch(EXA_SEARCH_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": params.apiKey,
+      "x-exa-integration": "openclaw",
+    },
+    body: JSON.stringify(body),
+    signal: withTimeout(undefined, params.timeoutSeconds * 1000),
+  });
+
+  if (!res.ok) {
+    const detailResult = await readResponseText(res, { maxBytes: 64_000 });
+    const detail = detailResult.text;
+    throw new Error(`Exa API error (${res.status}): ${detail || res.statusText}`);
+  }
+
+  const data = (await res.json()) as {
+    results?: Array<{
+      title?: string;
+      url?: string;
+      text?: string;
+      publishedDate?: string;
+    }>;
+  };
+
+  return {
+    results: (data.results ?? []).map((r) => ({
+      title: r.title ?? "",
+      url: r.url ?? "",
+      description: r.text ?? "",
+      published: r.publishedDate ?? undefined,
+    })),
+  };
+}
+
 async function runWebSearch(params: {
   query: string;
   count: number;
@@ -588,9 +704,13 @@ async function runWebSearch(params: {
   perplexityModel?: string;
   grokModel?: string;
   grokInlineCitations?: boolean;
+  exaContents?: boolean;
+  exaMaxChars?: number;
 }): Promise<Record<string, unknown>> {
   const cacheKey = normalizeCacheKey(
-    params.provider === "brave"
+    params.provider === "exa"
+      ? `${params.provider}:${params.query}:${params.count}:${String(params.exaContents ?? true)}:${params.exaMaxChars ?? DEFAULT_EXA_MAX_CHARS}`
+      : params.provider === "brave"
       ? `${params.provider}:${params.query}:${params.count}:${params.country || "default"}:${params.search_lang || "default"}:${params.ui_lang || "default"}:${params.freshness || "default"}`
       : params.provider === "perplexity"
         ? `${params.provider}:${params.query}:${params.perplexityBaseUrl ?? DEFAULT_PERPLEXITY_BASE_URL}:${params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL}:${params.freshness || "default"}`
@@ -658,6 +778,41 @@ async function runWebSearch(params: {
     writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
     return payload;
   }
+  if (params.provider === "exa") {
+    const exaResult = await runExaSearch({
+      query: params.query,
+      count: params.count,
+      apiKey: params.apiKey,
+      timeoutSeconds: params.timeoutSeconds,
+      contents: params.exaContents ?? true,
+      maxChars: params.exaMaxChars ?? DEFAULT_EXA_MAX_CHARS,
+    });
+
+    const mapped = exaResult.results.map((entry) => ({
+      title: entry.title ? wrapWebContent(entry.title, "web_search") : "",
+      url: entry.url,
+      description: entry.description ? wrapWebContent(entry.description, "web_search") : "",
+      published: entry.published || undefined,
+      siteName: resolveSiteName(entry.url) || undefined,
+    }));
+
+    const payload = {
+      query: params.query,
+      provider: params.provider,
+      count: mapped.length,
+      tookMs: Date.now() - start,
+      externalContent: {
+        untrusted: true,
+        source: "web_search",
+        provider: params.provider,
+        wrapped: true,
+      },
+      results: mapped,
+    };
+    writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+    return payload;
+  }
+
 
   if (params.provider !== "brave") {
     throw new Error("Unsupported web search provider.");
@@ -737,10 +892,14 @@ export function createWebSearchTool(options?: {
   }
 
   const provider = resolveSearchProvider(search);
+  const exaConfig = resolveExaConfig(search);
   const perplexityConfig = resolvePerplexityConfig(search);
   const grokConfig = resolveGrokConfig(search);
 
   const description =
+    provider === "exa"
+      ? "Search the web using Exa. Returns structured results with optional page text."
+      : const description =
     provider === "perplexity"
       ? "Search the web using Perplexity Sonar (direct or via OpenRouter). Returns AI-synthesized answers with citations from real-time web search."
       : provider === "grok"
@@ -760,7 +919,9 @@ export function createWebSearchTool(options?: {
           ? perplexityAuth?.apiKey
           : provider === "grok"
             ? resolveGrokApiKey(grokConfig)
-            : resolveSearchApiKey(search);
+            : provider === "exa"
+              ? resolveExaApiKey(exaConfig)
+              : resolveSearchApiKey(search);
 
       if (!apiKey) {
         return jsonResult(missingSearchKeyPayload(provider));
@@ -808,6 +969,8 @@ export function createWebSearchTool(options?: {
         perplexityModel: resolvePerplexityModel(perplexityConfig),
         grokModel: resolveGrokModel(grokConfig),
         grokInlineCitations: resolveGrokInlineCitations(grokConfig),
+        exaContents: resolveExaContents(exaConfig),
+        exaMaxChars: resolveExaMaxChars(exaConfig),
       });
       return jsonResult(result);
     },
@@ -825,4 +988,7 @@ export const __testing = {
   resolveGrokModel,
   resolveGrokInlineCitations,
   extractGrokContent,
+  resolveExaApiKey,
+  resolveExaContents,
+  resolveExaMaxChars,
 } as const;
