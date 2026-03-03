@@ -12,6 +12,8 @@ type SubagentPanelProps = {
 	task: string;
 	label?: string;
 	onBack: () => void;
+	onSubagentClick?: (task: string) => void;
+	onFilePathClick?: (path: string) => Promise<boolean | void> | boolean | void;
 };
 
 type QueuedMessage = {
@@ -20,7 +22,146 @@ type QueuedMessage = {
 	mentionedFiles: Array<{ name: string; path: string }>;
 };
 
-function taskMessage(sessionKey: string, task: string): UIMessage {
+function QueueItem({
+	msg,
+	idx,
+	onEdit,
+	onSendNow,
+	onRemove,
+}: {
+	msg: QueuedMessage;
+	idx: number;
+	onEdit: (id: string, text: string) => void;
+	onSendNow: (id: string) => void;
+	onRemove: (id: string) => void;
+}) {
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState(msg.text);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
+
+	const autoResize = () => {
+		const el = inputRef.current;
+		if (!el) {
+			return;
+		}
+		el.style.height = "auto";
+		el.style.height = `${el.scrollHeight}px`;
+	};
+
+	useEffect(() => {
+		if (!editing) {
+			return;
+		}
+		inputRef.current?.focus();
+		const len = inputRef.current?.value.length ?? 0;
+		inputRef.current?.setSelectionRange(len, len);
+		autoResize();
+	}, [editing]);
+
+	const commitEdit = () => {
+		const trimmed = draft.trim();
+		if (trimmed && trimmed !== msg.text) {
+			onEdit(msg.id, trimmed);
+		} else {
+			setDraft(msg.text);
+		}
+		setEditing(false);
+	};
+
+	return (
+		<div
+			className={`flex items-start gap-2.5 group py-2 ${idx > 0 ? "border-t" : ""}`}
+			style={idx > 0 ? { borderColor: "var(--color-border)" } : undefined}
+		>
+			<span
+				className="shrink-0 mt-px text-[11px] font-medium tabular-nums w-4"
+				style={{ color: "var(--color-text-muted)" }}
+			>
+				{idx + 1}
+			</span>
+			{editing ? (
+				<textarea
+					ref={inputRef}
+					className="flex-1 text-[13px] leading-[1.45] min-w-0 resize-none rounded-md px-2 py-1 outline-none"
+					style={{
+						color: "var(--color-text-secondary)",
+						background: "var(--color-bg)",
+						border: "1px solid var(--color-border)",
+					}}
+					rows={1}
+					value={draft}
+					onChange={(e) => {
+						setDraft(e.target.value);
+						autoResize();
+					}}
+					onBlur={commitEdit}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && !e.shiftKey) {
+							e.preventDefault();
+							commitEdit();
+						}
+						if (e.key === "Escape") {
+							setDraft(msg.text);
+							setEditing(false);
+						}
+					}}
+				/>
+			) : (
+				<div className="flex-1 min-w-0 flex items-center gap-2">
+					<p
+						className="text-[13px] leading-[1.45] line-clamp-1 min-w-0"
+						style={{ color: "var(--color-text-secondary)" }}
+					>
+						{msg.text}
+					</p>
+				</div>
+			)}
+			{!editing && (
+				<div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Edit message"
+						onClick={() => {
+							setDraft(msg.text);
+							setEditing(true);
+						}}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+							<path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
+						</svg>
+					</button>
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Send now"
+						onClick={() => onSendNow(msg.id)}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M12 19V5" />
+							<path d="m5 12 7-7 7 7" />
+						</svg>
+					</button>
+					<button
+						type="button"
+						className="rounded-md p-1 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800"
+						title="Remove from queue"
+						onClick={() => onRemove(msg.id)}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-stone-400">
+							<path d="M3 6h18" />
+							<path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+							<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+						</svg>
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
+export function taskMessage(sessionKey: string, task: string): UIMessage {
 	return {
 		id: `task-${sessionKey}`,
 		role: "user",
@@ -28,7 +169,7 @@ function taskMessage(sessionKey: string, task: string): UIMessage {
 	} as UIMessage;
 }
 
-function buildMessagesFromParsed(
+export function buildMessagesFromParsed(
 	sessionKey: string,
 	task: string,
 	parts: Array<Record<string, unknown>>,
@@ -64,7 +205,14 @@ function buildMessagesFromParsed(
 	return messages;
 }
 
-export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanelProps) {
+export function SubagentPanel({
+	sessionKey,
+	task,
+	label,
+	onBack,
+	onSubagentClick,
+	onFilePathClick,
+}: SubagentPanelProps) {
 	const editorRef = useRef<ChatEditorHandle>(null);
 	const [editorEmpty, setEditorEmpty] = useState(true);
 	const [messages, setMessages] = useState<UIMessage[]>(() => [taskMessage(sessionKey, task)]);
@@ -225,6 +373,16 @@ export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanel
 		[messages, sessionKey, streamFromResponse],
 	);
 
+	const removeQueuedMessage = useCallback((id: string) => {
+		setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+	}, []);
+
+	const updateQueuedMessageText = useCallback((id: string, text: string) => {
+		setQueuedMessages((prev) =>
+			prev.map((m) => (m.id === id ? { ...m, text } : m)),
+		);
+	}, []);
+
 	const handleEditorSubmit = useCallback(
 		async (text: string, mentionedFiles: Array<{ name: string; path: string }>) => {
 			if (isStreaming || isReconnecting) {
@@ -245,8 +403,6 @@ export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanel
 
 	const handleStop = useCallback(async () => {
 		streamAbortRef.current?.abort();
-		streamAbortRef.current = null;
-		setIsStreaming(false);
 		setIsReconnecting(false);
 		try {
 			await fetch("/api/chat/stop", {
@@ -257,7 +413,24 @@ export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanel
 		} catch {
 			// ignore
 		}
+		setIsStreaming(false);
+		streamAbortRef.current = null;
 	}, [sessionKey]);
+
+	const forceSendQueuedMessage = useCallback(
+		async (id: string) => {
+			const msg = queuedMessages.find((m) => m.id === id);
+			if (!msg) {
+				return;
+			}
+			setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+			await handleStop();
+			setTimeout(() => {
+				void sendSubagentMessage(msg.text, msg.mentionedFiles);
+			}, 100);
+		},
+		[queuedMessages, handleStop, sendSubagentMessage],
+	);
 
 	useEffect(() => {
 		void reconnect();
@@ -335,7 +508,13 @@ export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanel
 				<div className="flex-1 px-6">
 					<div className="max-w-2xl mx-auto py-3">
 						{messages.map((message, i) => (
-							<ChatMessage key={message.id} message={message} isStreaming={(isStreaming || isReconnecting) && i === messages.length - 1} />
+							<ChatMessage
+								key={message.id}
+								message={message}
+								isStreaming={(isStreaming || isReconnecting) && i === messages.length - 1}
+								onSubagentClick={onSubagentClick}
+								onFilePathClick={onFilePathClick}
+							/>
 						))}
 						<div ref={messagesEndRef} />
 					</div>
@@ -348,28 +527,33 @@ export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanel
 					<div className="max-w-[720px] mx-auto rounded-3xl overflow-hidden" style={{ background: "var(--color-chat-input-bg)", border: "1px solid var(--color-border)" }}>
 						{queuedMessages.length > 0 && (
 							<div className="px-3 pt-3">
-								<div className="rounded-xl overflow-hidden" style={{ border: "1px dashed var(--color-border-strong)", background: "var(--color-bg-elevated)" }}>
-									<div className="px-3 py-1.5 text-[11px] font-medium tracking-wide uppercase" style={{ borderBottom: "1px solid var(--color-border)", color: "var(--color-text-muted)", fontFamily: "var(--font-mono, monospace)" }}>
+								<div
+									className="rounded-xl border overflow-hidden"
+									style={{
+										background: "var(--color-surface)",
+										borderColor: "var(--color-border)",
+										boxShadow: "var(--shadow-sm)",
+									}}
+								>
+									<div
+										className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+										style={{
+											color: "var(--color-text-muted)",
+											background: "var(--color-surface-hover)",
+										}}
+									>
 										Queued ({queuedMessages.length})
 									</div>
-									<div className="flex flex-col gap-1 p-1.5">
-										{queuedMessages.map((msg) => (
-											<div key={msg.id} className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-2" style={{ background: "var(--color-bg-secondary)" }}>
-												<p className="flex-1 text-[13px] leading-[1.45] line-clamp-2" style={{ color: "var(--color-text)", whiteSpace: "pre-wrap" }}>
-													{msg.text}
-												</p>
-												<button
-													type="button"
-													className="rounded-md p-1 transition-colors hover:bg-[var(--color-bg)]"
-													style={{ color: "var(--color-text-muted)" }}
-													onClick={() => setQueuedMessages((prev) => prev.filter((m) => m.id !== msg.id))}
-												>
-													<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-														<path d="M18 6 6 18" />
-														<path d="m6 6 12 12" />
-													</svg>
-												</button>
-											</div>
+									<div className="flex flex-col p-2">
+										{queuedMessages.map((msg, idx) => (
+											<QueueItem
+												key={msg.id}
+												msg={msg}
+												idx={idx}
+												onEdit={updateQueuedMessageText}
+												onSendNow={forceSendQueuedMessage}
+												onRemove={removeQueuedMessage}
+											/>
 										))}
 									</div>
 								</div>
@@ -396,24 +580,52 @@ export function SubagentPanel({ sessionKey, task, label, onBack }: SubagentPanel
 										</svg>
 									</button>
 								)}
-								<button
-									type="button"
-									onClick={() => {
-										editorRef.current?.submit();
-									}}
-									disabled={editorEmpty}
-									className="w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
-									style={{
-										background: !editorEmpty ? ((isStreaming || isReconnecting) ? "var(--color-text-muted)" : "var(--color-accent)") : "var(--color-border-strong)",
-										color: "white",
-									}}
-									title={(isStreaming || isReconnecting) ? "Queue message" : "Send message"}
-								>
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-										<path d="M12 19V5" />
-										<path d="m5 12 7-7 7 7" />
-									</svg>
-								</button>
+								{isStreaming || isReconnecting ? (
+									<button
+										type="button"
+										onClick={() => {
+											editorRef.current?.submit();
+										}}
+										disabled={editorEmpty}
+										className="h-7 px-3 rounded-full flex items-center gap-1.5 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+										style={{
+											background: !editorEmpty
+												? "var(--color-accent)"
+												: "var(--color-surface-hover)",
+											color: !editorEmpty
+												? "white"
+												: "var(--color-text-muted)",
+										}}
+										title="Add to queue"
+									>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+											<polyline points="9 10 4 15 9 20" />
+											<path d="M20 4v7a4 4 0 0 1-4 4H4" />
+										</svg>
+										Queue
+									</button>
+								) : (
+									<button
+										type="button"
+										onClick={() => {
+											editorRef.current?.submit();
+										}}
+										disabled={editorEmpty}
+										className="w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
+										style={{
+											background: !editorEmpty
+												? "var(--color-accent)"
+												: "var(--color-border-strong)",
+											color: "white",
+										}}
+										title="Send message"
+									>
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+											<path d="M12 19V5" />
+											<path d="m5 12 7-7 7 7" />
+										</svg>
+									</button>
+								)}
 							</div>
 						</div>
 					</div>
