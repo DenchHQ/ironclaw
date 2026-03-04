@@ -391,13 +391,14 @@ export async function GET(
     if (where) {whereClause = ` WHERE ${where}`;}
   }
 
-  // Build ORDER BY clause
-  let orderByClause = " ORDER BY created_at DESC";
+  // Build ORDER BY clause.
+  // Keep a deterministic tie-breaker on entry_id to prevent row jitter between refreshes.
+  let orderByClause = " ORDER BY created_at DESC, entry_id DESC";
   if (sortParam) {
     try {
       const sortRules = JSON.parse(sortParam);
       const orderBy = buildOrderByClause(sortRules);
-      if (orderBy) {orderByClause = ` ORDER BY ${orderBy}`;}
+      if (orderBy) {orderByClause = ` ORDER BY ${orderBy}, entry_id DESC`;}
     } catch {
       // keep default sort
     }
@@ -446,7 +447,7 @@ export async function GET(
        JOIN entry_fields ef ON ef.entry_id = e.id
        JOIN fields f ON f.id = ef.field_id
        WHERE e.object_id = '${obj.id}'
-       ORDER BY e.created_at DESC
+       ORDER BY e.created_at DESC, e.id DESC
        LIMIT 5000`,
     );
     entries = pivotEavRows(rawRows);
