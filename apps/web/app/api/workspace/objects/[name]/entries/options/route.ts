@@ -65,20 +65,40 @@ export async function GET(
 		`SELECT * FROM fields WHERE object_id = '${sqlEscape(obj.id)}' ORDER BY sort_order`,
 	);
 	const displayFieldName = resolveDisplayField(obj, fields);
+	const displayFieldId = fields.find((field) => field.name === displayFieldName)?.id;
 
 	// Optional search filter
 	const url = new URL(req.url);
 	const query = url.searchParams.get("q")?.trim() ?? "";
+	const escapedQuery = sqlEscape(query.toLowerCase());
+	const searchWhereSql = query
+		? `
+			AND (
+				LOWER(e.id) LIKE '%${escapedQuery}%'
+				OR EXISTS (
+					SELECT 1
+					FROM entry_fields search_ef
+					WHERE search_ef.entry_id = e.id
+					  AND search_ef.value IS NOT NULL
+					  AND LOWER(search_ef.value) LIKE '%${escapedQuery}%'
+				)
+			)
+		`
+		: "";
 
-	// Fetch entries with their display field value
+	// Fetch entries and always label by the effective display/main field.
+	// Search can match any field, but labels stay stable for foreign-entry pickers.
 	const rows = duckdbQueryOnFile<{ entry_id: string; label: string | null }>(dbFile,
-		`SELECT e.id as entry_id, ef.value as label
+		`SELECT
+			e.id as entry_id,
+			display_ef.value as label
 		 FROM entries e
-		 LEFT JOIN entry_fields ef ON ef.entry_id = e.id
-		 LEFT JOIN fields f ON f.id = ef.field_id AND f.name = '${sqlEscape(displayFieldName)}'
+		 LEFT JOIN entry_fields display_ef
+		   ON display_ef.entry_id = e.id
+		  ${displayFieldId ? `AND display_ef.field_id = '${sqlEscape(displayFieldId)}'` : "AND 1 = 0"}
 		 WHERE e.object_id = '${sqlEscape(obj.id)}'
-		 ${query ? `AND (ef.value IS NOT NULL AND LOWER(ef.value) LIKE '%${sqlEscape(query.toLowerCase())}%')` : ""}
-		 ORDER BY ef.value ASC NULLS LAST
+		 ${searchWhereSql}
+		 ORDER BY COALESCE(display_ef.value, e.id) ASC
 		 LIMIT 200`,
 	);
 

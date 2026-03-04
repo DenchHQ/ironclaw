@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { RelationSelect } from "./relation-select";
+import { FormattedFieldValue } from "./formatted-field-value";
 
 
 function safeString(val: unknown): string {
@@ -11,6 +12,9 @@ function safeString(val: unknown): string {
   if (typeof val === "number" || typeof val === "boolean" || typeof val === "bigint") {return String(val);}
   return "";
 }
+
+const CREATED_AT_KEYS = ["created_at", "Created", "createdAt", "created"] as const;
+const UPDATED_AT_KEYS = ["updated_at", "Updated", "updatedAt", "updated"] as const;
 
 // --- Types ---
 
@@ -77,6 +81,36 @@ function parseRelationValue(value: string | null | undefined): string[] {
     }
   }
   return [trimmed];
+}
+
+function inputTypeForField(fieldType: string): React.HTMLInputTypeAttribute {
+  switch (fieldType) {
+    case "number":
+      return "number";
+    case "date":
+      return "date";
+    case "email":
+      return "email";
+    case "phone":
+      return "tel";
+    case "url":
+      return "url";
+    default:
+      return "text";
+  }
+}
+
+function resolveEntryMetaValue(
+  entry: Record<string, unknown>,
+  candidateKeys: readonly string[],
+): unknown {
+  for (const key of candidateKeys) {
+    const value = entry[key];
+    if (value !== null && value !== undefined && value !== "") {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 // --- Cell renderers (lightweight variants of object-table ones) ---
@@ -148,7 +182,10 @@ function RelationChips({
       {ids.map((id) => {
         const label = fieldLabels?.[id] ?? id;
         const handleClick = field.related_object_name && onNavigateEntry
-          ? () => onNavigateEntry(field.related_object_name!, id)
+          ? (e: React.MouseEvent<HTMLButtonElement>) => {
+            e.stopPropagation();
+            onNavigateEntry(field.related_object_name!, id);
+          }
           : undefined;
         return (
           <button
@@ -275,19 +312,16 @@ function FieldValue({
         />
       );
     case "email":
-      return (
-        <a href={`mailto:${safeString(value)}`} className="underline underline-offset-2" style={{ color: "#60a5fa" }}>
-          {safeString(value)}
-        </a>
-      );
+    case "number":
+    case "date":
+    case "phone":
+    case "url":
+    case "file":
+      return <FormattedFieldValue value={value} fieldType={field.type} mode="detail" />;
     case "richtext":
       return <span className="whitespace-pre-wrap">{safeString(value)}</span>;
-    case "number":
-      return <span className="tabular-nums">{safeString(value)}</span>;
-    case "date":
-      return <span>{safeString(value)}</span>;
     default:
-      return <span>{safeString(value)}</span>;
+      return <FormattedFieldValue value={value} fieldType={field.type} mode="detail" />;
   }
 }
 
@@ -408,6 +442,8 @@ export function EntryDetailModal({
   const title = displayField && data?.entry[displayField]
     ? safeString(data.entry[displayField])
     : `${String(objectName)} entry`;
+  const createdAtValue = data ? resolveEntryMetaValue(data.entry, CREATED_AT_KEYS) : undefined;
+  const updatedAtValue = data ? resolveEntryMetaValue(data.entry, UPDATED_AT_KEYS) : undefined;
 
   return (
     <div
@@ -565,7 +601,7 @@ export function EntryDetailModal({
                           ) : (
                             <>
                               <input
-                                type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+                                type={inputTypeForField(field.type)}
                                 value={editValue}
                                 onChange={(e) => setEditValue(e.target.value)}
                                 autoFocus
@@ -630,16 +666,20 @@ export function EntryDetailModal({
               )}
 
               {/* Timestamps */}
-              {(data.entry.created_at != null || data.entry.updated_at != null) && (
+              {(createdAtValue != null || updatedAtValue != null) && (
                 <div
                   className="pt-4 mt-4 border-t text-xs flex gap-6"
                   style={{ borderColor: "var(--color-border)", color: "var(--color-text-muted)" }}
                 >
-                  {data.entry.created_at != null && (
-                    <span>Created: {safeString(data.entry.created_at)}</span>
+                  {createdAtValue != null && (
+                    <span>
+                      Created: <FormattedFieldValue value={createdAtValue} fieldType="date" mode="detail" className="inline" />
+                    </span>
                   )}
-                  {data.entry.updated_at != null && (
-                    <span>Updated: {safeString(data.entry.updated_at)}</span>
+                  {updatedAtValue != null && (
+                    <span>
+                      Updated: <FormattedFieldValue value={updatedAtValue} fieldType="date" mode="detail" className="inline" />
+                    </span>
                   )}
                 </div>
               )}

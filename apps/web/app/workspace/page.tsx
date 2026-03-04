@@ -2613,6 +2613,7 @@ function ObjectView({
           relationLabels={data.relationLabels}
           reverseRelations={data.reverseRelations}
           onNavigateToObject={onNavigateToObject}
+          onNavigateToEntry={onOpenEntry}
           onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
           onRefresh={handleRefresh}
           columnVisibility={columnVisibility}
