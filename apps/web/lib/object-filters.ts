@@ -73,12 +73,129 @@ export type SortRule = {
 	direction: "asc" | "desc";
 };
 
+// ---------------------------------------------------------------------------
+// View types
+// ---------------------------------------------------------------------------
+
+export type ViewType = "table" | "kanban" | "calendar" | "timeline" | "gallery" | "list";
+
+export const VIEW_TYPES: ViewType[] = ["table", "kanban", "calendar", "timeline", "gallery", "list"];
+
+export type CalendarMode = "day" | "week" | "month" | "year";
+
+export type TimelineZoom = "day" | "week" | "month" | "quarter";
+
+export type ViewTypeSettings = {
+	kanbanField?: string;
+	calendarDateField?: string;
+	calendarEndDateField?: string;
+	calendarMode?: CalendarMode;
+	timelineStartField?: string;
+	timelineEndField?: string;
+	timelineGroupField?: string;
+	timelineZoom?: TimelineZoom;
+	galleryCoverField?: string;
+	galleryTitleField?: string;
+	listTitleField?: string;
+	listSubtitleField?: string;
+};
+
 export type SavedView = {
 	name: string;
+	view_type?: ViewType;
 	filters?: FilterGroup;
 	sort?: SortRule[];
 	columns?: string[];
+	settings?: ViewTypeSettings;
 };
+
+// ---------------------------------------------------------------------------
+// View type resolution
+// ---------------------------------------------------------------------------
+
+function isValidViewType(v: unknown): v is ViewType {
+	return typeof v === "string" && VIEW_TYPES.includes(v as ViewType);
+}
+
+/**
+ * Resolve the effective view type: saved view override > explicit current > object default > "table".
+ */
+export function resolveViewType(
+	savedView: SavedView | undefined,
+	currentViewType: ViewType | undefined,
+	objectDefault: string | undefined,
+): ViewType {
+	if (savedView?.view_type && isValidViewType(savedView.view_type)) {
+		return savedView.view_type;
+	}
+	if (currentViewType && isValidViewType(currentViewType)) {
+		return currentViewType;
+	}
+	if (objectDefault && isValidViewType(objectDefault)) {
+		return objectDefault;
+	}
+	return "table";
+}
+
+/**
+ * Merge view-type settings: saved view settings override object-level defaults.
+ */
+export function resolveViewSettings(
+	savedViewSettings: ViewTypeSettings | undefined,
+	objectDefaults: ViewTypeSettings | undefined,
+): ViewTypeSettings {
+	if (!objectDefaults) {return savedViewSettings ?? {};}
+	if (!savedViewSettings) {return objectDefaults;}
+	const merged: ViewTypeSettings = { ...objectDefaults };
+	for (const key of Object.keys(savedViewSettings) as (keyof ViewTypeSettings)[]) {
+		const val = savedViewSettings[key];
+		if (val !== undefined) {
+			(merged as Record<string, unknown>)[key] = val;
+		}
+	}
+	return merged;
+}
+
+/**
+ * Auto-detect a reasonable field for a view type from the available fields.
+ * Used when no explicit setting is configured.
+ */
+export function autoDetectViewField(
+	viewType: ViewType,
+	settingKey: keyof ViewTypeSettings,
+	fields: FieldMeta[],
+): string | undefined {
+	switch (settingKey) {
+		case "kanbanField":
+			return (
+				fields.find((f) => f.type === "enum" && /status/i.test(f.name))?.name ??
+				fields.find((f) => f.type === "enum")?.name
+			);
+		case "calendarDateField":
+		case "timelineStartField":
+			return (
+				fields.find((f) => f.type === "date" && /due|start|begin/i.test(f.name))?.name ??
+				fields.find((f) => f.type === "date")?.name
+			);
+		case "calendarEndDateField":
+		case "timelineEndField":
+			return fields.find((f) => f.type === "date" && /end|finish|close/i.test(f.name))?.name;
+		case "timelineGroupField":
+			return fields.find((f) => f.type === "enum")?.name;
+		case "galleryTitleField":
+		case "listTitleField":
+			return (
+				fields.find((f) => f.type === "text" && /name|title/i.test(f.name))?.name ??
+				fields.find((f) => f.type === "text")?.name
+			);
+		case "galleryCoverField":
+			return undefined;
+		case "listSubtitleField":
+			return fields.find((f) => f.type === "text" && !/name|title/i.test(f.name))?.name;
+		default:
+			return undefined;
+	}
+}
 
 /** Minimal field descriptor needed by the filter system. */
 export type FieldMeta = {

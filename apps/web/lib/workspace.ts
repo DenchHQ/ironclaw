@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { join, resolve, normalize, relative } from "node:path";
 import { homedir } from "node:os";
 import YAML from "yaml";
-import { normalizeFilterGroup, type SavedView } from "./object-filters";
+import { normalizeFilterGroup, type SavedView, type ViewTypeSettings } from "./object-filters";
 
 const execAsync = promisify(exec);
 
@@ -954,6 +954,7 @@ export function parseSimpleYaml(
 export type ObjectYamlConfig = {
   icon?: string;
   default_view?: string;
+  view_settings?: ViewTypeSettings;
   views?: SavedView[];
   active_view?: string;
   /** Any other top-level keys. */
@@ -1051,12 +1052,13 @@ export function findObjectDir(objectName: string): string | null {
 export function getObjectViews(objectName: string): {
   views: SavedView[];
   activeView: string | undefined;
+  viewSettings: ViewTypeSettings | undefined;
 } {
   const dir = findObjectDir(objectName);
-  if (!dir) {return { views: [], activeView: undefined };}
+  if (!dir) {return { views: [], activeView: undefined, viewSettings: undefined };}
 
   const config = readObjectYaml(dir);
-  if (!config) {return { views: [], activeView: undefined };}
+  if (!config) {return { views: [], activeView: undefined, viewSettings: undefined };}
 
   return {
     views: (config.views ?? []).map((v) => ({
@@ -1064,6 +1066,7 @@ export function getObjectViews(objectName: string): {
       filters: v.filters ? normalizeFilterGroup(v.filters) : undefined,
     })),
     activeView: config.active_view,
+    viewSettings: config.view_settings,
   };
 }
 
@@ -1074,14 +1077,19 @@ export function saveObjectViews(
   objectName: string,
   views: SavedView[],
   activeView?: string,
+  viewSettings?: ViewTypeSettings,
 ): boolean {
   const dir = findObjectDir(objectName);
   if (!dir) {return false;}
 
-  writeObjectYaml(dir, {
+  const patch: ObjectYamlConfig = {
     views: views.length > 0 ? views : undefined,
     active_view: activeView,
-  });
+  };
+  if (viewSettings) {
+    patch.view_settings = viewSettings;
+  }
+  writeObjectYaml(dir, patch);
   return true;
 }
 

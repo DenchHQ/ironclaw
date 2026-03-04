@@ -473,7 +473,7 @@ export async function GET(
   const effectiveDisplayField = resolveDisplayField(obj, fields);
 
   // Include saved views from .object.yaml
-  const { views: savedViews, activeView } = getObjectViews(name);
+  const { views: savedViews, activeView, viewSettings } = getObjectViews(name);
 
   return Response.json({
     object: obj,
@@ -485,6 +485,7 @@ export async function GET(
     effectiveDisplayField,
     savedViews,
     activeView,
+    viewSettings,
     totalCount,
     page,
     pageSize,
