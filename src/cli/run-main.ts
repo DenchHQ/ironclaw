@@ -8,11 +8,55 @@ import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { assertSupportedRuntime } from "../infra/runtime-guard.js";
 import { installUnhandledRejectionHandler } from "../infra/unhandled-rejections.js";
 import { enableConsoleCapture } from "../logging.js";
+import { isRich, theme } from "../terminal/theme.js";
 import { VERSION } from "../version.js";
 import { getCommandPath, getPrimaryCommand, hasHelpOrVersion } from "./argv.js";
 import { emitCliBanner } from "./banner.js";
 import { tryRouteCli } from "./route.js";
 import { normalizeWindowsArgv } from "./windows-argv.js";
+
+function emitDeprecationBanner(): void {
+  if (!process.stdout.isTTY) {
+    return;
+  }
+  const rich = isRich();
+  const w = Math.min(process.stdout.columns ?? 72, 72);
+  const pad = (text: string, width: number) => {
+    const gap = width - 2 - text.length;
+    const left = Math.floor(gap / 2);
+    const right = gap - left;
+    return `║${" ".repeat(left)}${text}${" ".repeat(right)}║`;
+  };
+
+  const top = `╔${"═".repeat(w - 2)}╗`;
+  const bot = `╚${"═".repeat(w - 2)}╝`;
+  const empty = pad("", w);
+  const lines = [
+    top,
+    empty,
+    pad("⚠️   DEPRECATION NOTICE   ⚠️", w),
+    empty,
+    pad("This project (ironclaw) is DEPRECATED.", w),
+    pad("It has been superseded by DENCHCLAW.", w),
+    empty,
+    pad("To use the supported version, run:", w),
+    empty,
+    pad("npx denchclaw", w),
+    empty,
+    pad("ironclaw will no longer receive updates.", w),
+    empty,
+    pad("For more information, visit https://denchclaw.com", w),
+    empty,
+    bot,
+  ];
+
+  if (rich) {
+    const styled = lines.map((l) => theme.warn(l));
+    process.stdout.write(`\n${styled.join("\n")}\n\n`);
+  } else {
+    process.stdout.write(`\n${lines.join("\n")}\n\n`);
+  }
+}
 
 export function rewriteUpdateFlagArgv(argv: string[]): string[] {
   const index = argv.indexOf("--update");
@@ -87,6 +131,8 @@ export async function runCli(argv: string[] = process.argv) {
   if (!hideBanner) {
     await emitCliBanner(VERSION, { argv: normalizedArgv });
   }
+
+  emitDeprecationBanner();
 
   if (await tryRouteCli(normalizedArgv)) {
     return;
