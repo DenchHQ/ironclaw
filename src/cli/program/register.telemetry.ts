@@ -34,7 +34,7 @@ export function registerTelemetryCommand(program: Command) {
     .action(() => {
       writeTelemetryConfig({ enabled: false });
       console.log("Telemetry has been disabled.");
-      console.log("You can re-enable it anytime with: denchclaw telemetry enable");
+      console.log("You can re-enable it anytime with: npx denchclaw telemetry enable");
     });
 
   cmd
@@ -54,7 +54,7 @@ export function registerTelemetryCommand(program: Command) {
     .description("Enable privacy mode (redacts message content, default)")
     .action(() => {
       if (!isTelemetryEnabled()) {
-        console.log("Telemetry is currently disabled. Enable it first with: denchclaw telemetry enable");
+        console.log("Telemetry is currently disabled. Enable it first with: npx denchclaw telemetry enable");
         return;
       }
       writeTelemetryConfig({ privacyMode: true });
@@ -66,11 +66,11 @@ export function registerTelemetryCommand(program: Command) {
     .description("Disable privacy mode (sends full message content)")
     .action(() => {
       if (!isTelemetryEnabled()) {
-        console.log("Telemetry is currently disabled. Enable it first with: denchclaw telemetry enable");
+        console.log("Telemetry is currently disabled. Enable it first with: npx denchclaw telemetry enable");
         return;
       }
       writeTelemetryConfig({ privacyMode: false });
       console.log("Privacy mode disabled. Full message content and tool results will be captured.");
-      console.log("Re-enable anytime with: denchclaw telemetry privacy on");
+      console.log("Re-enable anytime with: npx denchclaw telemetry privacy on");
     });
 }

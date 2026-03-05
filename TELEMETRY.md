@@ -84,8 +84,8 @@ of privacy mode.
 Toggle privacy mode:
 
 ```bash
-denchclaw telemetry privacy off    # capture full content
-denchclaw telemetry privacy on     # redact content (default)
+npx denchclaw telemetry privacy off    # capture full content
+npx denchclaw telemetry privacy on     # redact content (default)
 ```
 
 ### PostHog evaluations
@@ -136,7 +136,7 @@ and AI observability):
 ### CLI command
 
 ```bash
-denchclaw telemetry disable
+npx denchclaw telemetry disable
 ```
 
 ### Environment variable
@@ -158,7 +158,7 @@ Telemetry is automatically disabled when `CI=true` is set.
 ### Check status
 
 ```bash
-denchclaw telemetry status
+npx denchclaw telemetry status
 ```
 
 ---
@@ -168,8 +168,8 @@ denchclaw telemetry status
 ### Privacy mode
 
 ```bash
-denchclaw telemetry privacy on     # redact message content (default)
-denchclaw telemetry privacy off    # send full message content
+npx denchclaw telemetry privacy on     # redact message content (default)
+npx denchclaw telemetry privacy off    # send full message content
 ```
 
 Privacy mode is stored in `~/.openclaw-dench/telemetry.json` and is read by both
@@ -196,7 +196,7 @@ sending them. Useful for inspecting exactly what would be reported.
 ## Re-enabling
 
 ```bash
-denchclaw telemetry enable
+npx denchclaw telemetry enable
 ```
 
 ## How It Works
