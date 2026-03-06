@@ -11,6 +11,12 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { motion, LayoutGroup } from "framer-motion";
+import {
+	Mail, Users, DollarSign, Calendar, Zap, FileText, Database,
+	Code, Bug, Clock, BarChart3, PenTool, Globe, Search, Sparkles,
+	FolderOpen, Table, BrainCircuit, MessageSquare, Workflow,
+} from "lucide-react";
 import { ChatMessage } from "./chat-message";
 import {
 	FilePickerModal,
@@ -24,6 +30,131 @@ import {
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { UnicodeSpinner } from "./unicode-spinner";
+
+// ── Prompt suggestions for new chat hero ──
+
+const PROMPT_SUGGESTIONS = [
+	{
+		id: "email-draft",
+		label: "Draft an Email",
+		icon: Mail,
+		prompt: "Draft a professional follow-up email to a client after our initial meeting, thanking them and summarizing the next steps we discussed",
+	},
+	{
+		id: "enrich-contacts",
+		label: "Enrich Leads",
+		icon: Users,
+		prompt: "When a new contact is added to my CRM, find their LinkedIn profile and company details and update the record",
+	},
+	{
+		id: "invoice-reminder",
+		label: "Invoice Reminder",
+		icon: DollarSign,
+		prompt: "Draft a friendly payment reminder email for an invoice that is 7 days overdue, including the invoice number and amount",
+	},
+	{
+		id: "schedule-report",
+		label: "Weekly Report",
+		icon: Calendar,
+		prompt: "Set up a cron job that runs every Friday at 4pm to compile a summary of all completed tasks this week and email it to the team",
+	},
+	{
+		id: "auto-tasks",
+		label: "Auto Tasks",
+		icon: Zap,
+		prompt: "Create a workflow that automatically creates a task whenever someone mentions me in an email with a request or action item",
+	},
+	{
+		id: "summarize-docs",
+		label: "Summarize Docs",
+		icon: FileText,
+		prompt: "Read through all the documents in my workspace and create a concise summary of the key information across all files",
+	},
+	{
+		id: "query-data",
+		label: "Query Database",
+		icon: Database,
+		prompt: "Connect to my database and show me the top 10 customers by revenue this quarter, including their contact details",
+	},
+	{
+		id: "code-review",
+		label: "Review Code",
+		icon: Code,
+		prompt: "Review the code in my workspace for potential bugs, security issues, and performance improvements. Prioritize critical findings",
+	},
+	{
+		id: "debug-error",
+		label: "Debug Error",
+		icon: Bug,
+		prompt: "Help me debug this error I'm seeing in production. Walk me through the likely causes and how to fix each one",
+	},
+	{
+		id: "daily-digest",
+		label: "Daily Digest",
+		icon: Clock,
+		prompt: "Set up a daily digest that runs every morning at 9am summarizing my unread emails, calendar events, and pending tasks",
+	},
+	{
+		id: "analyze-csv",
+		label: "Analyze Data",
+		icon: BarChart3,
+		prompt: "Analyze the CSV file in my workspace — find trends, outliers, and generate a visual report with key insights",
+	},
+	{
+		id: "write-content",
+		label: "Write Content",
+		icon: PenTool,
+		prompt: "Write a compelling blog post about how AI automation is transforming small business operations in 2026",
+	},
+	{
+		id: "web-research",
+		label: "Web Research",
+		icon: Globe,
+		prompt: "Research the top 5 competitors in my industry and create a comparison table with their pricing, features, and market position",
+	},
+	{
+		id: "search-files",
+		label: "Search Files",
+		icon: Search,
+		prompt: "Search through all files in my workspace and find every mention of customer feedback, complaints, or feature requests",
+	},
+	{
+		id: "brainstorm",
+		label: "Brainstorm Ideas",
+		icon: Sparkles,
+		prompt: "Help me brainstorm 10 creative marketing campaign ideas for launching a new product to our existing customer base",
+	},
+	{
+		id: "organize-files",
+		label: "Organize Files",
+		icon: FolderOpen,
+		prompt: "Look at all the files in my workspace and suggest a better folder structure. Then reorganize them for me",
+	},
+	{
+		id: "create-spreadsheet",
+		label: "Build Spreadsheet",
+		icon: Table,
+		prompt: "Create a project tracking spreadsheet with columns for task name, assignee, status, priority, due date, and notes",
+	},
+	{
+		id: "ai-strategy",
+		label: "AI Strategy",
+		icon: BrainCircuit,
+		prompt: "Help me create an AI adoption strategy for my team — which tasks should we automate first for the biggest impact?",
+	},
+	{
+		id: "meeting-prep",
+		label: "Meeting Prep",
+		icon: MessageSquare,
+		prompt: "Prepare a briefing document for my upcoming client meeting. Include their recent activity, open issues, and talking points",
+	},
+	{
+		id: "build-workflow",
+		label: "Build Workflow",
+		icon: Workflow,
+		prompt: "Design an automated onboarding workflow for new clients — from welcome email to document collection to account setup",
+	},
+];
 
 // ── Attachment types & helpers ──
 
@@ -740,6 +871,41 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 		const [rawView, _setRawView] = useState(false);
+
+		// ── Hero state (new chat screen) ──
+		const [greeting, setGreeting] = useState("");
+		const [visiblePrompts, setVisiblePrompts] = useState<typeof PROMPT_SUGGESTIONS>([]);
+
+		useEffect(() => {
+			const greetings = [
+				"Ready to build?",
+				"Let's automate something?",
+				"What shall we tackle?",
+				"Ready to get things done?",
+				"Let's get to work?",
+				"How can I help?",
+			];
+			const getTimeGreeting = () => {
+				const hour = new Date().getHours();
+				if (hour < 12) return "Good morning!";
+				if (hour < 17) return "Good afternoon!";
+				return "Good evening!";
+			};
+			const allGreetings = [getTimeGreeting(), ...greetings];
+			setGreeting(allGreetings[Math.floor(Math.random() * allGreetings.length)]);
+		}, []);
+
+		useEffect(() => {
+			const shuffled = [...PROMPT_SUGGESTIONS].sort(() => 0.5 - Math.random());
+			setVisiblePrompts(shuffled.slice(0, 7));
+		}, []);
+
+		const handlePromptClick = useCallback((promptId: string) => {
+			const prompt = PROMPT_SUGGESTIONS.find((p) => p.id === promptId);
+			if (!prompt) return;
+			editorRef.current?.setText(prompt.prompt);
+			setEditorEmpty(false);
+		}, []);
 
 		const filePath = fileContext?.path ?? null;
 
@@ -1712,9 +1878,205 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			lastMsg.parts.some((p) => p.type === "text" && (p as { text: string }).text.length > 0);
 		const showInlineSpinner = isStreaming && !lastAssistantHasText;
 
+		const showHeroState = messages.length === 0 && !compact && !isSubagentMode && !loadingSession;
+
+		// ── Input bar content (shared between hero and bottom positions) ──
+
+		const inputBarContent = (
+			<>
+				{queuedMessages.length > 0 && (
+					<div className={compact ? "px-2 pt-2" : "px-3 pt-3"}>
+						<div
+							className="rounded-xl border overflow-hidden"
+							style={{
+								background: "var(--color-surface)",
+								borderColor: "var(--color-border)",
+								boxShadow: "var(--shadow-sm)",
+							}}
+						>
+							<div
+								className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+								style={{ color: "var(--color-text-muted)", background: "var(--color-surface-hover)" }}
+							>
+								Queue ({queuedMessages.length})
+							</div>
+							<div className="flex flex-col p-2">
+								{queuedMessages.map((msg, idx) => (
+									<QueueItem
+										key={msg.id}
+										msg={msg}
+										idx={idx}
+										onEdit={updateQueuedMessageText}
+										onSendNow={forceSendQueuedMessage}
+										onRemove={removeQueuedMessage}
+									/>
+								))}
+							</div>
+						</div>
+					</div>
+				)}
+
+				{!isSubagentMode && (
+					<AttachmentStrip
+						files={attachedFiles}
+						compact={compact}
+						onRemove={removeAttachment}
+						onClearAll={clearAllAttachments}
+					/>
+				)}
+
+				<ChatEditor
+					ref={editorRef}
+					onSubmit={handleEditorSubmit}
+					onChange={(isEmpty) => setEditorEmpty(isEmpty)}
+					onNativeFileDrop={isSubagentMode ? undefined : uploadAndAttachNativeFiles}
+					placeholder={
+						showHeroState
+							? "Build a workflow to automate your tasks"
+							: isSubagentMode
+								? (isStreaming ? "Type to queue a message..." : "Type @ to mention files...")
+								: compact && fileContext
+									? `Ask about ${fileContext.isDirectory ? "this folder" : fileContext.filename}...`
+									: isStreaming
+										? "Type to queue a message..."
+										: attachedFiles.length > 0
+											? "Add a message or send files..."
+											: "Type @ to mention files..."
+					}
+					disabled={loadingSession}
+					compact={compact}
+				/>
+
+				<div className={`flex items-center justify-between ${compact ? "px-2 pb-1.5" : "px-3 pb-2.5"}`}>
+					<div className="flex items-center gap-0.5">
+						{!isSubagentMode && (
+							<button
+								type="button"
+								onClick={() => setShowFilePicker(true)}
+								className="p-1.5 rounded-lg hover:opacity-80 transition-opacity"
+								style={{
+									color: attachedFiles.length > 0 ? "var(--color-accent)" : "var(--color-text-muted)",
+								}}
+								title="Attach files"
+							>
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+									<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+								</svg>
+							</button>
+						)}
+					</div>
+					<div className="flex items-center gap-1.5">
+						{isStreaming && (
+							<button
+								type="button"
+								onClick={() => handleStop()}
+								className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center`}
+								style={{ background: "var(--color-text)", color: "var(--color-bg)" }}
+								title="Stop generating"
+							>
+								<svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor">
+									<rect width="10" height="10" rx="1.5" />
+								</svg>
+							</button>
+						)}
+						{isStreaming ? (
+							<button
+								type="button"
+								onClick={() => editorRef.current?.submit()}
+								disabled={(editorEmpty && attachedFiles.length === 0) || loadingSession}
+								className="h-7 px-3 rounded-full flex items-center gap-1.5 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+								style={{
+									background: !editorEmpty || attachedFiles.length > 0 ? "var(--color-accent)" : "var(--color-surface-hover)",
+									color: !editorEmpty || attachedFiles.length > 0 ? "white" : "var(--color-text-muted)",
+								}}
+								title="Add to queue"
+							>
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+									<polyline points="9 10 4 15 9 20" />
+									<path d="M20 4v7a4 4 0 0 1-4 4H4" />
+								</svg>
+								Queue
+							</button>
+						) : (
+							<button
+								type="button"
+								onClick={() => editorRef.current?.submit()}
+								disabled={(editorEmpty && attachedFiles.length === 0) || loadingSession}
+								className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
+								style={{
+									background: !editorEmpty || attachedFiles.length > 0 ? "var(--color-accent)" : "var(--color-text-muted)",
+									color: !editorEmpty || attachedFiles.length > 0 ? "white" : "var(--color-bg)",
+								}}
+								title="Send message"
+							>
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+									<path d="M12 19V5" />
+									<path d="m5 12 7-7 7 7" />
+								</svg>
+							</button>
+						)}
+					</div>
+				</div>
+			</>
+		);
+
+		const inputBarContainer = (onDragOverHandler: React.DragEventHandler, onDragLeaveHandler: React.DragEventHandler, onDropHandler: React.DragEventHandler) => (
+			<div
+				data-chat-drop-target=""
+				className="rounded-3xl overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow] duration-150 ease-out data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!"
+				style={{
+					background: "var(--color-surface)",
+					borderColor: "var(--color-border)",
+				}}
+				onDragOver={onDragOverHandler}
+				onDragLeave={onDragLeaveHandler}
+				onDrop={onDropHandler}
+			>
+				{inputBarContent}
+			</div>
+		);
+
+		const handleInputDragOver: React.DragEventHandler = (e) => {
+			if (
+				e.dataTransfer?.types.includes("application/x-file-mention") ||
+				e.dataTransfer?.types.includes("Files")
+			) {
+				e.preventDefault();
+				e.dataTransfer.dropEffect = "copy";
+				(e.currentTarget as HTMLElement).setAttribute("data-drag-hover", "");
+			}
+		};
+		const handleInputDragLeave: React.DragEventHandler = (e) => {
+			if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+				(e.currentTarget as HTMLElement).removeAttribute("data-drag-hover");
+			}
+		};
+		const handleInputDrop: React.DragEventHandler = (e) => {
+			(e.currentTarget as HTMLElement).removeAttribute("data-drag-hover");
+			const data = e.dataTransfer?.getData("application/x-file-mention");
+			if (data) {
+				e.preventDefault();
+				e.stopPropagation();
+				try {
+					const { name, path } = JSON.parse(data) as { name: string; path: string };
+					if (name && path) {
+						editorRef.current?.insertFileMention(name, path);
+					}
+				} catch { /* ignore */ }
+				return;
+			}
+			const files = e.dataTransfer?.files;
+			if (files && files.length > 0) {
+				e.preventDefault();
+				e.stopPropagation();
+				uploadAndAttachNativeFiles(files);
+			}
+		};
+
 		// ── Render ──
 
 		return (
+			<LayoutGroup>
 			<div
 				className="h-full flex flex-col"
 				style={{ background: "var(--color-main-bg)" }}
@@ -1905,40 +2267,121 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								</p>
 							</div>
 						</div>
+					) : showHeroState ? (
+						<div className="flex flex-col items-center justify-center min-h-[75vh] py-12">
+							{/* Hero greeting */}
+							{greeting && (
+								<motion.h1
+									className="text-4xl md:text-5xl font-light tracking-normal font-instrument mb-10 text-center"
+									style={{ color: "var(--color-text)" }}
+									initial="hidden"
+									animate="visible"
+									variants={{
+										hidden: { opacity: 0 },
+										visible: {
+											opacity: 1,
+											transition: { staggerChildren: 0.12, delayChildren: 0.2 },
+										},
+									}}
+								>
+									{greeting.split(" ").map((word, i) => (
+										<motion.span
+											key={i}
+											className="inline-block mr-2"
+											variants={{
+												hidden: { opacity: 0, y: 20, filter: "blur(8px)" },
+												visible: {
+													opacity: 1,
+													y: 0,
+													filter: "blur(0px)",
+													transition: { duration: 0.8, ease: [0.2, 0.65, 0.3, 0.9] },
+												},
+											}}
+										>
+											{word}
+										</motion.span>
+									))}
+								</motion.h1>
+							)}
+
+							{/* Centered input bar */}
+							<motion.div
+								className="w-full max-w-[720px] mx-auto px-4"
+								initial={{ opacity: 0, y: 20 }}
+								animate={{ opacity: 1, y: 0 }}
+								transition={{ duration: 0.8, delay: 0.8, ease: [0.22, 1, 0.36, 1] }}
+							>
+								<motion.div
+									layout
+									layoutId="chat-input-bar"
+									transition={{ type: "spring", stiffness: 260, damping: 30 }}
+								>
+									{inputBarContainer(handleInputDragOver, handleInputDragLeave, handleInputDrop)}
+								</motion.div>
+							</motion.div>
+
+							{/* Prompt suggestion pills */}
+							<motion.div
+								className="mt-6 flex flex-col gap-2.5 w-full max-w-[720px] mx-auto px-4"
+								initial={{ opacity: 0, y: 10 }}
+								animate={{ opacity: 1, y: 0 }}
+								transition={{ duration: 0.5, delay: 1.0, ease: [0.22, 1, 0.36, 1] }}
+							>
+								<div className="flex items-center justify-center gap-2 flex-wrap">
+									{visiblePrompts.slice(0, 3).map((template) => {
+										const Icon = template.icon;
+										return (
+											<button
+												key={template.id}
+												type="button"
+												onClick={() => handlePromptClick(template.id)}
+												className="group flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium whitespace-nowrap rounded-xl transition-all duration-200 border"
+												style={{
+													background: "var(--color-surface)",
+													borderColor: "var(--color-border)",
+													color: "var(--color-text-secondary)",
+												}}
+											>
+												<Icon className="w-3.5 h-3.5 opacity-50 group-hover:opacity-100 transition-opacity duration-200" />
+												{template.label}
+											</button>
+										);
+									})}
+								</div>
+								<div className="flex items-center justify-center gap-2 flex-wrap">
+									{visiblePrompts.slice(3, 7).map((template) => {
+										const Icon = template.icon;
+										return (
+											<button
+												key={template.id}
+												type="button"
+												onClick={() => handlePromptClick(template.id)}
+												className="group flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium whitespace-nowrap rounded-xl transition-all duration-200 border"
+												style={{
+													background: "var(--color-surface)",
+													borderColor: "var(--color-border)",
+													color: "var(--color-text-secondary)",
+												}}
+											>
+												<Icon className="w-3.5 h-3.5 opacity-50 group-hover:opacity-100 transition-opacity duration-200" />
+												{template.label}
+											</button>
+										);
+									})}
+								</div>
+							</motion.div>
+						</div>
 					) : messages.length === 0 ? (
 						<div className="flex items-center justify-center h-full min-h-[60vh]">
 							<div className="text-center max-w-md px-4">
-								{compact ? (
-									<p
-										className="text-sm"
-										style={{
-											color: "var(--color-text-muted)",
-										}}
-									>
-										Ask about this file
-									</p>
-								) : (
-									<>
-										<h3
-											className="font-instrument text-3xl tracking-tight mb-2"
-											style={{
-												color: "var(--color-text)",
-											}}
-										>
-											What can I help with?
-										</h3>
-										<p
-											className="text-sm leading-relaxed"
-											style={{
-												color: "var(--color-text-muted)",
-											}}
-										>
-											Send a message to start a
-											conversation with your
-											agent.
-										</p>
-									</>
-								)}
+								<p
+									className="text-sm"
+									style={{
+										color: "var(--color-text-muted)",
+									}}
+								>
+									Ask about this file
+								</p>
 							</div>
 						</div>
 					) : (
@@ -2016,270 +2459,23 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				)}
 				</div>
 
-				{/* Input bar at bottom */}
-				<div
-					className={`${compact ? "px-3 py-2" : "px-3 pb-3 pt-0 md:px-6 md:pb-5"} z-20`}
-					style={{ background: "var(--color-bg-glass)" }}
-				>
+				{/* Input bar at bottom (hidden when hero state is active) */}
+				{!showHeroState && (
 					<div
-						className={compact ? "" : "max-w-[720px] mx-auto"}
+						className={`${compact ? "px-3 py-2" : "px-3 pb-3 pt-0 md:px-6 md:pb-5"} z-20`}
+						style={{ background: "var(--color-bg-glass)" }}
 					>
-						<div
-							data-chat-drop-target=""
-							className="rounded-3xl overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow] duration-150 ease-out data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!"
-							style={{
-								background: "var(--color-surface)",
-								borderColor: "var(--color-border)",
-							}}
-						onDragOver={(e) => {
-							if (
-								e.dataTransfer?.types.includes("application/x-file-mention") ||
-								e.dataTransfer?.types.includes("Files")
-							) {
-								e.preventDefault();
-								e.dataTransfer.dropEffect = "copy";
-								// visual feedback
-								(e.currentTarget as HTMLElement).setAttribute("data-drag-hover", "");
-							}
-						}}
-						onDragLeave={(e) => {
-							// Only remove when leaving the container itself (not entering a child)
-							if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-								(e.currentTarget as HTMLElement).removeAttribute("data-drag-hover");
-							}
-						}}
-						onDrop={(e) => {
-							(e.currentTarget as HTMLElement).removeAttribute("data-drag-hover");
-
-							// Sidebar file mention drop
-							const data = e.dataTransfer?.getData("application/x-file-mention");
-							if (data) {
-								e.preventDefault();
-								e.stopPropagation();
-								try {
-									const { name, path } = JSON.parse(data) as { name: string; path: string };
-									if (name && path) {
-										editorRef.current?.insertFileMention(name, path);
-									}
-								} catch {
-									// ignore malformed data
-								}
-								return;
-							}
-
-							// Native file drop (from OS file manager / Desktop)
-							const files = e.dataTransfer?.files;
-							if (files && files.length > 0) {
-								e.preventDefault();
-								e.stopPropagation();
-								 uploadAndAttachNativeFiles(files);
-							}
-						}}
-						>
-						{/* Queued messages indicator */}
-						{queuedMessages.length > 0 && (
-							<div className={compact ? "px-2 pt-2" : "px-3 pt-3"}>
-								<div
-									className="rounded-xl border overflow-hidden"
-									style={{
-										background: "var(--color-surface)",
-										borderColor: "var(--color-border)",
-										boxShadow: "var(--shadow-sm)",
-									}}
-								>
-									<div
-										className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
-										style={{ color: "var(--color-text-muted)", background: "var(--color-surface-hover)" }}
-									>
-										Queue ({queuedMessages.length})
-									</div>
-									<div className="flex flex-col p-2">
-										{queuedMessages.map((msg, idx) => (
-											<QueueItem
-												key={msg.id}
-												msg={msg}
-												idx={idx}
-												onEdit={updateQueuedMessageText}
-												onSendNow={forceSendQueuedMessage}
-												onRemove={removeQueuedMessage}
-											/>
-										))}
-									</div>
-								</div>
-							</div>
-						)}
-
-						{/* Attachment preview strip (hidden in subagent mode) */}
-						{!isSubagentMode && (
-						<AttachmentStrip
-							files={attachedFiles}
-							compact={compact}
-							onRemove={removeAttachment}
-							onClearAll={
-								clearAllAttachments
-							}
-						/>
-						)}
-
-							<ChatEditor
-								ref={editorRef}
-								onSubmit={handleEditorSubmit}
-								onChange={(isEmpty) =>
-									setEditorEmpty(isEmpty)
-								}
-								onNativeFileDrop={isSubagentMode ? undefined : uploadAndAttachNativeFiles}
-							placeholder={
-								isSubagentMode
-									? (isStreaming ? "Type to queue a message..." : "Type @ to mention files...")
-									: compact && fileContext
-										? `Ask about ${fileContext.isDirectory ? "this folder" : fileContext.filename}...`
-										: isStreaming
-											? "Type to queue a message..."
-										: attachedFiles.length >
-													0
-												? "Add a message or send files..."
-												: "Type @ to mention files..."
-								}
-								disabled={loadingSession}
-								compact={compact}
-							/>
-
-						{/* Toolbar row */}
-							<div
-								className={`flex items-center justify-between ${compact ? "px-2 pb-1.5" : "px-3 pb-2.5"}`}
+						<div className={compact ? "" : "max-w-[720px] mx-auto"}>
+							<motion.div
+								layout
+								layoutId="chat-input-bar"
+								transition={{ type: "spring", stiffness: 260, damping: 30 }}
 							>
-							<div className="flex items-center gap-0.5">
-								{!isSubagentMode && (
-								<button
-									type="button"
-									onClick={() =>
-										setShowFilePicker(
-											true,
-										)
-									}
-									className="p-1.5 rounded-lg hover:opacity-80 transition-opacity"
-									style={{
-										color:
-											attachedFiles.length >
-											0
-												? "var(--color-accent)"
-												: "var(--color-text-muted)",
-									}}
-									title="Attach files"
-								>
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-										</svg>
-									</button>
-								)}
-								</div>
-							{/* Send / Stop / Queue buttons */}
-							<div className="flex items-center gap-1.5">
-								{isStreaming && (
-									<button
-										type="button"
-										onClick={() => handleStop()}
-										className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center`}
-										style={{
-											background: "var(--color-text)",
-											color: "var(--color-bg)",
-										}}
-										title="Stop generating"
-									>
-										<svg
-											width="8"
-											height="8"
-											viewBox="0 0 10 10"
-											fill="currentColor"
-										>
-											<rect width="10" height="10" rx="1.5" />
-										</svg>
-									</button>
-								)}
-								{isStreaming ? (
-									<button
-										type="button"
-										onClick={() => {
-											editorRef.current?.submit();
-										}}
-										disabled={
-											(editorEmpty &&
-												attachedFiles.length === 0) ||
-											loadingSession
-										}
-										className="h-7 px-3 rounded-full flex items-center gap-1.5 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-										style={{
-											background:
-												!editorEmpty || attachedFiles.length > 0
-													? "var(--color-accent)"
-													: "var(--color-surface-hover)",
-											color:
-												!editorEmpty || attachedFiles.length > 0
-													? "white"
-													: "var(--color-text-muted)",
-										}}
-										title="Add to queue"
-									>
-										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-											<polyline points="9 10 4 15 9 20" />
-											<path d="M20 4v7a4 4 0 0 1-4 4H4" />
-										</svg>
-										Queue
-									</button>
-								) : (
-									<button
-										type="button"
-										onClick={() => {
-											editorRef.current?.submit();
-										}}
-										disabled={
-											(editorEmpty &&
-												attachedFiles.length === 0) ||
-											loadingSession
-										}
-										className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
-										style={{
-											background:
-												!editorEmpty ||
-												attachedFiles.length > 0
-													? "var(--color-accent)"
-													: "var(--color-text-muted)",
-											color:
-												!editorEmpty || attachedFiles.length > 0
-													? "white"
-													: "var(--color-bg)",
-										}}
-										title="Send message"
-									>
-										<svg
-											width="14"
-											height="14"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2.5"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<path d="M12 19V5" />
-											<path d="m5 12 7-7 7 7" />
-										</svg>
-									</button>
-								)}
-							</div>
-							</div>
+								{inputBarContainer(handleInputDragOver, handleInputDragLeave, handleInputDrop)}
+							</motion.div>
 						</div>
 					</div>
-				</div>
+				)}
 
 				{/* File picker modal (not in subagent mode) */}
 				{!isSubagentMode && (
@@ -2293,6 +2489,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				)}
 
 			</div>
+			</LayoutGroup>
 		);
 	},
 );

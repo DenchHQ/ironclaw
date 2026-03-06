@@ -31,6 +31,8 @@ export type ChatEditorHandle = {
 	isEmpty: () => boolean;
 	/** Programmatically submit the current content. */
 	submit: () => void;
+	/** Replace the editor content with the given text and focus at end. */
+	setText: (text: string) => void;
 };
 
 type ChatEditorProps = {
@@ -412,6 +414,10 @@ export const ChatEditor = forwardRef<ChatEditorHandle, ChatEditorProps>(
 					submitRef.current(text, mentionedFiles);
 					editor.commands.clearContent(true);
 				}
+			},
+			setText: (text: string) => {
+				editor?.commands.setContent(text);
+				editor?.commands.focus("end");
 			},
 		}));
 
