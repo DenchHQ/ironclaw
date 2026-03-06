@@ -60,6 +60,7 @@ export type DataTableProps<TData, TValue> = {
 	enableColumnReordering?: boolean;
 	onColumnReorder?: (newOrder: string[]) => void;
 	initialColumnVisibility?: VisibilityState;
+	onColumnVisibilityChanged?: (visibility: VisibilityState) => void;
 	// pagination
 	pageSize?: number;
 	// actions
@@ -173,6 +174,7 @@ export function DataTable<TData, TValue>({
 	enableColumnReordering = false,
 	onColumnReorder,
 	initialColumnVisibility,
+	onColumnVisibilityChanged,
 	pageSize: defaultPageSize = 100,
 	onRefresh,
 	onAdd,
@@ -345,7 +347,11 @@ export function DataTable<TData, TValue>({
 		onSortingChange: setSorting,
 		onGlobalFilterChange: setGlobalFilter,
 		onColumnFiltersChange: setColumnFilters,
-		onColumnVisibilityChange: setColumnVisibility,
+		onColumnVisibilityChange: (updater) => {
+			const next = typeof updater === "function" ? updater(columnVisibility) : updater;
+			setColumnVisibility(next);
+			onColumnVisibilityChanged?.(next);
+		},
 		onRowSelectionChange: (updater) => {
 			if (onRowSelectionChange) {
 				onRowSelectionChange(updater);

@@ -50,6 +50,7 @@ type ObjectTableProps = {
 	onRefresh?: () => void;
 	/** Column visibility state keyed by field ID. */
 	columnVisibility?: Record<string, boolean>;
+	onColumnVisibilityChanged?: (visibility: Record<string, boolean>) => void;
 	/** Server-side pagination props. */
 	serverPagination?: ServerPaginationProps;
 	/** Server-side search callback. */
@@ -440,6 +441,7 @@ export function ObjectTable({
 	onEntryClick,
 	onRefresh,
 	columnVisibility,
+	onColumnVisibilityChanged,
 	serverPagination,
 	onServerSearch,
 }: ObjectTableProps) {
@@ -711,6 +713,7 @@ export function ObjectTable({
 			rowActions={getRowActions}
 			stickyFirstColumn
 			initialColumnVisibility={columnVisibility}
+			onColumnVisibilityChanged={onColumnVisibilityChanged}
 			serverPagination={serverPagination}
 			onServerSearch={onServerSearch}
 		/>

@@ -716,8 +716,27 @@ function flattenVisible(tree: TreeNode[], expanded: Set<string>): TreeNode[] {
 
 // --- Main Exported Component ---
 
+const STORAGE_KEY = "denchclaw-tree-expanded";
+
+function loadExpandedPaths(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw) as string[];
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch { /* ignore corrupt data */ }
+  return new Set();
+}
+
+function saveExpandedPaths(paths: Set<string>) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...paths]));
+  } catch { /* storage full or unavailable */ }
+}
+
 export function FileManagerTree({ tree, activePath, onSelect, onRefresh, compact, parentDir, onNavigateUp, browseDir: _browseDir, workspaceRoot, onExternalDrop }: FileManagerTreeProps) {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => loadExpandedPaths());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
@@ -771,21 +790,10 @@ export function FileManagerTree({ tree, activePath, onSelect, onRefresh, compact
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-expand first level on mount.
-  // Keep ~skills and ~memories collapsed by default; always expand ~chats.
-  const collapsedByDefault = new Set(["~skills", "~memories"]);
+  // Persist expanded paths to localStorage whenever they change
   useEffect(() => {
-    if (tree.length > 0 && expandedPaths.size === 0) {
-      const initial = new Set<string>();
-      for (const node of tree) {
-        if (collapsedByDefault.has(node.path)) {continue;}
-        if (node.children && node.children.length > 0) {
-          initial.add(node.path);
-        }
-      }
-      setExpandedPaths(initial);
-    }
-  }, [tree]);
+    saveExpandedPaths(expandedPaths);
+  }, [expandedPaths]);
 
   const handleToggleExpand = useCallback((path: string) => {
     setExpandedPaths((prev) => {
